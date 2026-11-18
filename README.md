@@ -145,6 +145,23 @@ curl -O http://127.0.0.1:8000/api/export/csv
 curl -s http://127.0.0.1:8000/api/alerts/geojson
 ```
 
+### Fetch Ward Road Health & SLA Compliance Analytics
+```bash
+curl -s http://127.0.0.1:8000/api/analytics/wards
+```
+
+### Filter Alerts by SLA Status (`breached`, `at_risk`, `on_track`, `met`)
+```bash
+curl -s "http://127.0.0.1:8000/api/alerts?sla_status=breached"
+```
+
+---
+
+## 📊 Ward Analytics & SLA Compliance Tracker
+RoadIQ tracks municipal repair accountability against severity-tiered PWD SLA windows (**24h** for S-5 Critical, **48h** for S-4 High, **72h** for S-3 Medium, **7d** for S-2 Low, **14d** for S-1 Minor):
+- **Live SLA Countdowns & Overdue Filtering**: Every alert exposes `sla_hours`, `sla_deadline`, `sla_remaining_minutes`, `sla_elapsed_pct`, and `sla_status` (`on_track`, `at_risk`, `breached`, `met`), surfaced directly on triage cards, work order modals, and CSV exports.
+- **Per-Ward Road Health Score (0–100)**: `GET /api/analytics/wards` computes a weighted health index and operational grade (`Good`, `Fair`, `Poor`, `Critical`) per municipal ward, sorted worst-first in the interactive Ward Analytics drawer with one-click map focusing and an SLA Escalation Watchlist.
+
 ---
 
 ## 🛡️ Fleet De-Duplication Engine

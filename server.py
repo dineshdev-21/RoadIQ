@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
 import os
 
-from models import AlertCreate, AlertUpdate, AlertResponse, MunicipalStats
+from models import AlertCreate, AlertUpdate, AlertResponse, MunicipalStats, WardAnalyticsResponse
 from database import (
     insert_or_deduplicate,
     get_alerts,
@@ -26,6 +26,7 @@ from database import (
     delete_alert,
     get_stats,
     get_geojson_collection,
+    get_ward_analytics,
     init_db
 )
 from seed_data import seed_database, LOCATIONS, VEHICLE_FLEET, generate_svg_defect_image
@@ -101,6 +102,11 @@ def health_check():
 def fetch_stats():
     return get_stats()
 
+@app.get("/api/analytics/wards", response_model=WardAnalyticsResponse)
+def fetch_ward_analytics():
+    """Returns per-ward Road Health Scores, SLA compliance breakdown, and overdue escalation watchlist"""
+    return get_ward_analytics()
+
 @app.get("/api/alerts")
 def list_alerts(
     severity: Optional[int] = Query(None, ge=1, le=5, description="Filter by severity 1-5"),
@@ -109,6 +115,7 @@ def list_alerts(
     status: Optional[str] = Query(None, description="New, Under Review, Dispatched, In Repair, Resolved"),
     search: Optional[str] = Query(None, description="Keyword search road name, ward, or notes"),
     only_flagged: Optional[bool] = Query(None, description="Only critical/flagged priority S=4-5 alerts"),
+    sla_status: Optional[str] = Query(None, description="Filter by SLA status: breached, at_risk, on_track, met"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0)
 ):
@@ -119,6 +126,7 @@ def list_alerts(
         status=status,
         search=search,
         only_flagged=only_flagged,
+        sla_status=sla_status,
         limit=limit,
         offset=offset
     )
@@ -203,7 +211,8 @@ def export_csv():
     writer.writerow([
         "Event ID", "Timestamp (UTC)", "Latitude", "Longitude", "Road Name", "Ward / Circle",
         "Anomaly Class", "Severity Score", "Severity Label", "Priority Flag", "Estimated Depth (cm)",
-        "Vehicle Speed (km/h)", "Municipal Action", "Status", "Assigned Crew", "Confirmation Count",
+        "Vehicle Speed (km/h)", "Municipal Action", "SLA Window (h)", "SLA Deadline (UTC)", "SLA Status",
+        "Status", "Assigned Crew", "Confirmation Count",
         "Reporting Vehicle", "IMU Z-RMS (g)", "Peak Freq (Hz)", "Deflection D (mm)", "Onset Rate R (mm/ms)", "Notes"
     ])
 
@@ -223,6 +232,9 @@ def export_csv():
             a["estimated_depth_cm"],
             a["vehicle_speed"],
             a["municipal_action"],
+            a.get("sla_hours", ""),
+            a.get("sla_deadline", ""),
+            (a.get("sla_status") or "").upper(),
             a["status"],
             a.get("assigned_crew") or "Unassigned",
             a["confirmation_count"],

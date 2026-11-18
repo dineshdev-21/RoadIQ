@@ -8,8 +8,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const state = {
     alerts: [],
     filteredAlerts: [],
+    wardAnalytics: null,
     selectedAlert: null,
-    activeTab: 'all', // 'all', 'critical', 'dispatched', 'resolved'
+    activeTab: 'all', // 'all', 'critical', 'overdue', 'dispatched', 'resolved'
     filterSeverity: '',
     filterClass: '',
     filterWard: '',
@@ -36,6 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Tab Counter Elements
   const tabCountAllEl = document.getElementById('tabCountAll');
   const tabCountCriticalEl = document.getElementById('tabCountCritical');
+  const tabCountOverdueEl = document.getElementById('tabCountOverdue');
   const tabCountDispatchedEl = document.getElementById('tabCountDispatched');
   const tabCountResolvedEl = document.getElementById('tabCountResolved');
 
@@ -47,6 +49,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const feedTabs = document.querySelectorAll('.feed-tab');
 
   // Action Buttons
+  const btnWardAnalytics = document.getElementById('btnWardAnalytics');
+  const analyticsBreachBadge = document.getElementById('analyticsBreachBadge');
   const btnSimulate = document.getElementById('btnSimulate');
   const btnExportCsv = document.getElementById('btnExportCsv');
   const btnReseed = document.getElementById('btnReseed');
@@ -86,6 +90,138 @@ document.addEventListener('DOMContentLoaded', () => {
   const modalConfirmationText = document.getElementById('modalConfirmationText');
   const btnSaveWorkOrder = document.getElementById('btnSaveWorkOrder');
   const toastContainer = document.getElementById('toastContainer');
+
+  // Modal SLA Elements
+  const modalSlaStatusBadge = document.getElementById('modalSlaStatusBadge');
+  const modalSlaCountdown = document.getElementById('modalSlaCountdown');
+  const modalSlaProgressFill = document.getElementById('modalSlaProgressFill');
+  const modalSlaMeta = document.getElementById('modalSlaMeta');
+
+  // Ward Analytics & SLA Drawer Elements
+  const analyticsDrawer = document.getElementById('analyticsDrawer');
+  const btnRefreshAnalytics = document.getElementById('btnRefreshAnalytics');
+  const btnFilterOverdueFromDrawer = document.getElementById('btnFilterOverdueFromDrawer');
+  const analyticsGeneratedAt = document.getElementById('analyticsGeneratedAt');
+  const anOverallHealth = document.getElementById('anOverallHealth');
+  const anOverallGrade = document.getElementById('anOverallGrade');
+  const anOpenResolved = document.getElementById('anOpenResolved');
+  const anCompliancePct = document.getElementById('anCompliancePct');
+  const anAvgDepth = document.getElementById('anAvgDepth');
+  const anBreachedCount = document.getElementById('anBreachedCount');
+  const anAtRiskCount = document.getElementById('anAtRiskCount');
+  const anSeverityBar = document.getElementById('anSeverityBar');
+  const anSeverityLegend = document.getElementById('anSeverityLegend');
+  const anStatusPipeline = document.getElementById('anStatusPipeline');
+  const wardLeaderboard = document.getElementById('wardLeaderboard');
+  const slaWatchlist = document.getElementById('slaWatchlist');
+
+  // Safe HTML Escaping Utility
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  // Conditionally load Temporal polyfill when native Temporal is unavailable
+  const durationFormatter = typeof Intl !== 'undefined' && typeof Intl.DurationFormat === 'function'
+    ? new Intl.DurationFormat('en-US', { style: 'narrow' })
+    : null;
+
+  (async () => {
+    if (typeof globalThis.Temporal === 'undefined') {
+      try {
+        const mod = await import('https://esm.sh/temporal-polyfill');
+        if (mod && mod.Temporal) {
+          globalThis.Temporal = mod.Temporal;
+          if (state.alerts.length > 0) {
+            renderIncidentList();
+          }
+          if (analyticsDrawer && analyticsDrawer.open && state.wardAnalytics) {
+            renderWardAnalytics(state.wardAnalytics);
+          }
+        }
+      } catch (err) {
+        console.debug('Temporal polyfill unavailable offline; using server-computed SLA durations.', err);
+      }
+    }
+  })();
+
+  // Format balanced SLA duration using Temporal + Intl.DurationFormat
+  function formatDurationFromMinutes(absMinutes) {
+    const clamped = Math.max(0, Math.round(absMinutes));
+    const days = Math.floor(clamped / 1440);
+    const hours = Math.floor((clamped % 1440) / 60);
+    const minutes = clamped % 60;
+    const parts = days > 0 ? { days, hours } : (hours > 0 ? { hours, minutes } : { minutes });
+
+    if (durationFormatter) {
+      return durationFormatter.format(parts);
+    }
+    if (days > 0) return `${days}d ${hours}h`;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+  }
+
+  function computeLiveSlaDisplay(alert) {
+    const status = alert.sla_status || (alert.status === 'Resolved' ? 'met' : 'on_track');
+    if (status === 'met') {
+      return {
+        slaStatus: 'met',
+        badgeText: '✓ SLA Met',
+        countdownText: 'Resolved within municipal workflow',
+      };
+    }
+
+    let isBreached = status === 'breached';
+    let formattedSpan = '';
+
+    if (typeof globalThis.Temporal !== 'undefined' && alert.sla_deadline) {
+      try {
+        const nowZdt = globalThis.Temporal.Now.zonedDateTimeISO();
+        const deadlineZdt = globalThis.Temporal.Instant.from(alert.sla_deadline)
+          .toZonedDateTimeISO(nowZdt.timeZoneId);
+        const diff = nowZdt.until(deadlineZdt, { largestUnit: 'day', smallestUnit: 'minute' });
+        isBreached = diff.sign < 0;
+        const absDiff = diff.abs();
+        const displayDur = absDiff.days > 0
+          ? absDiff.round({ largestUnit: 'day', smallestUnit: 'hour' })
+          : absDiff;
+        formattedSpan = typeof displayDur.toLocaleString === 'function'
+          ? displayDur.toLocaleString('en-US', { style: 'narrow' })
+          : formatDurationFromMinutes(Math.abs(alert.sla_remaining_minutes || 0));
+      } catch (err) {
+        formattedSpan = formatDurationFromMinutes(Math.abs(alert.sla_remaining_minutes || 0));
+      }
+    } else {
+      const mins = Number(alert.sla_remaining_minutes ?? 0);
+      isBreached = status === 'breached' || mins < 0;
+      formattedSpan = formatDurationFromMinutes(Math.abs(mins));
+    }
+
+    const effectiveStatus = isBreached ? 'breached' : status;
+    if (effectiveStatus === 'breached') {
+      return {
+        slaStatus: 'breached',
+        badgeText: `⏱ Overdue ${formattedSpan}`,
+        countdownText: `Breached by ${formattedSpan}`,
+      };
+    }
+    if (effectiveStatus === 'at_risk') {
+      return {
+        slaStatus: 'at_risk',
+        badgeText: `⚠️ ${formattedSpan} left`,
+        countdownText: `${formattedSpan} remaining (At Risk)`,
+      };
+    }
+    return {
+      slaStatus: 'on_track',
+      badgeText: `⏳ ${formattedSpan} left`,
+      countdownText: `${formattedSpan} remaining`,
+    };
+  }
 
   // Corridor Coordinates (Punjab NH-44 / LPU / Phagwara)
   const CORRIDOR_CENTER = [31.2505, 75.7112];
@@ -348,20 +484,21 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const statusClass = (alert.status || 'New').toLowerCase().replace(' ', '-');
+      const slaView = computeLiveSlaDisplay(alert);
 
       card.innerHTML = `
         <div class="card-top-row">
           <div class="badge-class">
             <span>${alert.anomaly_class === 'Pothole' ? '🕳️' : (alert.anomaly_class === 'Manhole Cover' ? '⚙️' : '⚠️')}</span>
-            <span>${alert.anomaly_class}</span>
+            <span>${escapeHtml(alert.anomaly_class)}</span>
           </div>
           <span class="sev-tag sev-${alert.severity_score}">
-            S-${alert.severity_score} ${alert.severity_label}
+            S-${alert.severity_score} ${escapeHtml(alert.severity_label)}
           </span>
         </div>
 
-        <div class="card-road-title" title="${alert.road_name}">
-          ${alert.road_name}
+        <div class="card-road-title" title="${escapeHtml(alert.road_name)}">
+          ${escapeHtml(alert.road_name)}
         </div>
 
         <div class="card-meta-line">
@@ -373,8 +510,8 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
 
         <div class="card-footer-row">
-          <span class="status-pill ${statusClass}">${alert.status}</span>
-          <span style="color: var(--text-sub);">${new Date(alert.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+          <span class="status-pill ${statusClass}">${escapeHtml(alert.status)}</span>
+          <span class="sla-pill sla-${slaView.slaStatus}">${escapeHtml(slaView.badgeText)}</span>
         </div>
       `;
 
@@ -408,6 +545,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateCounters() {
     const total = state.alerts.length;
     const critical = state.alerts.filter(a => a.severity_score >= 4 && a.status !== 'Resolved').length;
+    const overdue = state.alerts.filter(a => a.status !== 'Resolved' && a.sla_status === 'breached').length;
     const dispatched = state.alerts.filter(a => a.status === 'Dispatched').length;
     const resolved = state.alerts.filter(a => a.status === 'Resolved').length;
     const confirmed = state.alerts.filter(a => a.confirmation_count >= 3).length;
@@ -422,15 +560,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     tabCountAllEl.textContent = total;
     tabCountCriticalEl.textContent = critical;
+    if (tabCountOverdueEl) tabCountOverdueEl.textContent = overdue;
     tabCountDispatchedEl.textContent = dispatched;
     tabCountResolvedEl.textContent = resolved;
+
+    if (analyticsBreachBadge) {
+      analyticsBreachBadge.textContent = overdue;
+      analyticsBreachBadge.style.display = overdue > 0 ? 'inline-flex' : 'none';
+    }
   }
 
   // Filter Pipeline
   function applyFilters() {
     state.filteredAlerts = state.alerts.filter(a => {
       // Tab filter
-      if (state.activeTab === 'critical' && a.severity_score < 4) return false;
+      if (state.activeTab === 'critical' && (a.severity_score < 4 || a.status === 'Resolved')) return false;
+      if (state.activeTab === 'overdue' && (a.status === 'Resolved' || a.sla_status !== 'breached')) return false;
       if (state.activeTab === 'dispatched' && a.status !== 'Dispatched') return false;
       if (state.activeTab === 'resolved' && a.status !== 'Resolved') return false;
 
@@ -534,6 +679,25 @@ document.addEventListener('DOMContentLoaded', () => {
     modalSevCalculation.textContent = `0.15 · ${d_mm}mm + 2.0 · ${r_mm_ms}mm/ms = ${raw_s} → Clip [1..5] = ${alert.severity_score}`;
     modalDepthCm.textContent = `~${alert.estimated_depth_cm} cm`;
 
+    // SLA Window & Progress Bar
+    const slaView = computeLiveSlaDisplay(alert);
+    if (modalSlaStatusBadge) {
+      modalSlaStatusBadge.className = `sla-pill sla-${slaView.slaStatus}`;
+      modalSlaStatusBadge.textContent = slaView.badgeText;
+    }
+    if (modalSlaCountdown) {
+      modalSlaCountdown.textContent = slaView.countdownText;
+    }
+    if (modalSlaProgressFill) {
+      const pct = Math.min(100, Math.max(4, Number(alert.sla_elapsed_pct || 0)));
+      modalSlaProgressFill.className = `sla-progress-fill sla-${slaView.slaStatus}`;
+      modalSlaProgressFill.style.width = `${slaView.slaStatus === 'breached' ? 100 : pct}%`;
+    }
+    if (modalSlaMeta) {
+      const deadlineText = alert.sla_deadline ? new Date(alert.sla_deadline).toUTCString() : '--';
+      modalSlaMeta.textContent = `Target Window: ${alert.sla_hours || '--'}h • Deadline: ${deadlineText}`;
+    }
+
     // Multi-modal metrics
     modalMetricVisual.textContent = `${((snap.visual_confidence || 0.94) * 100).toFixed(1)}%`;
     modalMetricZrms.textContent = `${snap.imu_z_rms || '--'} g`;
@@ -607,6 +771,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       applyFilters();
       updateCounters();
+      refreshAnalyticsIfOpen();
       showToast(`Work order for ${updated.road_name} updated to "${newStatus}"`, 'success');
       closeInspectionModal();
     } catch (e) {
@@ -680,7 +845,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Handle Live Real-Time Events
   function handleLiveEvent(msg) {
-    if (msg.type === 'NEW_ALERT' || msg.type === 'SIMULATED_TRIGGER') {
+    if (msg.type === 'NEW_ALERT' || msg.type === 'SIMULATED_TRIGGER' || msg.type === 'UPDATED_CONFIRMATION') {
       const alert = msg.alert;
       const isCritical = alert.severity_score >= 4;
 
@@ -689,7 +854,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Show toast
       showToast(
-        `<strong>${alert.anomaly_class} (S-${alert.severity_score})</strong> detected on ${alert.road_name}!`,
+        `<strong>${escapeHtml(alert.anomaly_class)} (S-${alert.severity_score})</strong> ${msg.type === 'UPDATED_CONFIRMATION' ? 'confirmed' : 'detected'} on ${escapeHtml(alert.road_name)}!`,
         isCritical ? 'danger' : 'warning'
       );
 
@@ -703,6 +868,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       updateCounters();
       applyFilters();
+      refreshAnalyticsIfOpen();
 
       // Trigger card flash
       setTimeout(() => {
@@ -719,7 +885,13 @@ document.addEventListener('DOMContentLoaded', () => {
         state.alerts[idx] = updated;
         updateCounters();
         applyFilters();
+        refreshAnalyticsIfOpen();
       }
+    } else if (msg.type === 'DELETE_ALERT') {
+      state.alerts = state.alerts.filter(a => a.event_id !== msg.event_id);
+      updateCounters();
+      applyFilters();
+      refreshAnalyticsIfOpen();
     }
   }
 
@@ -787,6 +959,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await fetch('/api/seed', { method: 'POST' });
       if (!res.ok) throw new Error('Reseed failed');
       await loadAlerts();
+      refreshAnalyticsIfOpen();
       showToast('Corridor successfully reseeded!', 'success');
     } catch (e) {
       showToast(`Reseed error: ${e.message}`, 'danger');
@@ -863,6 +1036,299 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('resize', () => {
     map.invalidateSize();
   });
+
+  // =========================================================================
+  // Ward Analytics & SLA Compliance Drawer (<dialog closedby="any">)
+  // =========================================================================
+  function gradeClassName(grade) {
+    return `grade-${(grade || 'good').toLowerCase()}`;
+  }
+
+  function renderWardAnalytics(data) {
+    if (!data || !data.corridor_summary) return;
+    const summary = data.corridor_summary;
+
+    if (analyticsGeneratedAt && data.generated_at) {
+      analyticsGeneratedAt.textContent = `Updated ${new Date(data.generated_at).toUTCString()} • Click any ward to focus map`;
+    }
+
+    if (anOverallHealth) {
+      anOverallHealth.textContent = `${summary.overall_health_score.toFixed(1)}/100`;
+    }
+    if (anOverallGrade) {
+      anOverallGrade.textContent = summary.overall_health_grade;
+      anOverallGrade.className = `health-grade-pill ${gradeClassName(summary.overall_health_grade)}`;
+    }
+    if (anOpenResolved) {
+      anOpenResolved.textContent = `${summary.open_alerts} open • ${summary.resolved_alerts} resolved`;
+    }
+    if (anCompliancePct) {
+      anCompliancePct.textContent = `${summary.sla_compliance_pct.toFixed(1)}%`;
+    }
+    if (anAvgDepth) {
+      anAvgDepth.textContent = `Avg depth: ${summary.avg_estimated_depth_cm.toFixed(1)} cm`;
+    }
+    if (anBreachedCount) {
+      anBreachedCount.textContent = summary.sla_breached_count;
+    }
+    if (anAtRiskCount) {
+      anAtRiskCount.textContent = summary.sla_at_risk_count;
+    }
+
+    // Stacked Severity Distribution Bar
+    const sevMeta = [
+      { key: '5', label: 'S-5 Critical (24h)', color: 'var(--sev-5-crimson)' },
+      { key: '4', label: 'S-4 High (48h)', color: 'var(--sev-4-orange)' },
+      { key: '3', label: 'S-3 Medium (72h)', color: 'var(--sev-3-amber)' },
+      { key: '2', label: 'S-2 Low (7d)', color: 'var(--sev-2-emerald)' },
+      { key: '1', label: 'S-1 Minor (14d)', color: 'var(--sev-1-teal)' },
+    ];
+    const sevCounts = data.severity_breakdown || {};
+    const totalForBar = Math.max(1, summary.total_alerts || 0);
+
+    if (anSeverityBar) {
+      anSeverityBar.innerHTML = sevMeta
+        .map(item => {
+          const count = sevCounts[item.key] || 0;
+          if (!count) return '';
+          const widthPct = ((count / totalForBar) * 100).toFixed(2);
+          return `<div class="stacked-bar-segment sev-${item.key}" style="width: ${widthPct}%" title="${item.label}: ${count}"></div>`;
+        })
+        .join('');
+    }
+
+    if (anSeverityLegend) {
+      anSeverityLegend.innerHTML = sevMeta
+        .map(item => {
+          const count = sevCounts[item.key] || 0;
+          return `
+            <span class="stacked-legend-item">
+              <span class="stacked-legend-dot" style="background: ${item.color};"></span>
+              <span>${item.label}: <strong>${count}</strong></span>
+            </span>
+          `;
+        })
+        .join('');
+    }
+
+    // Triage Status Pipeline
+    if (anStatusPipeline) {
+      const stages = ['New', 'Under Review', 'Dispatched', 'In Repair', 'Resolved'];
+      const statusCounts = data.status_breakdown || {};
+      anStatusPipeline.innerHTML = stages
+        .map(stage => `
+          <div class="pipeline-chip">
+            <div class="pipeline-chip-count">${statusCounts[stage] || 0}</div>
+            <div class="pipeline-chip-label">${escapeHtml(stage)}</div>
+          </div>
+        `)
+        .join('');
+    }
+
+    // Ward Leaderboard
+    if (wardLeaderboard) {
+      const wards = data.wards || [];
+      if (wards.length === 0) {
+        wardLeaderboard.innerHTML = '<div class="empty-state">No municipal ward telemetry available yet.</div>';
+      } else {
+        wardLeaderboard.innerHTML = '';
+        wards.forEach(ward => {
+          const gradeCls = gradeClassName(ward.health_grade);
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'ward-row-card';
+          btn.innerHTML = `
+            <div class="ward-row-top">
+              <span class="ward-row-name">${escapeHtml(ward.ward_id)}</span>
+              <span class="ward-score-group">
+                <span class="ward-score-num">${ward.health_score.toFixed(1)}</span>
+                <span class="health-grade-pill ${gradeCls}">${escapeHtml(ward.health_grade)}</span>
+              </span>
+            </div>
+            <div class="ward-health-meter" aria-hidden="true">
+              <div class="ward-health-fill ${gradeCls}" style="width: ${Math.max(4, ward.health_score)}%;"></div>
+            </div>
+            <div class="ward-row-metrics">
+              <span>Open: <strong>${ward.open_alerts}</strong> / ${ward.total_alerts}</span>
+              <span class="${ward.critical_open > 0 ? 'ward-metric-danger' : ''}">S-4/5 Open: <strong>${ward.critical_open}</strong></span>
+              <span class="${ward.sla_breached > 0 ? 'ward-metric-danger' : ''}">SLA Breached: <strong>${ward.sla_breached}</strong></span>
+              <span>Compliance: <strong>${ward.sla_compliance_pct.toFixed(0)}%</strong></span>
+              <span>Avg Sev: <strong>${ward.avg_severity.toFixed(1)}</strong></span>
+            </div>
+          `;
+          btn.addEventListener('click', () => {
+            focusWardFromAnalytics(ward);
+          });
+          wardLeaderboard.appendChild(btn);
+        });
+      }
+    }
+
+    // SLA Escalation Watchlist
+    if (slaWatchlist) {
+      const urgent = data.sla_alerts || [];
+      if (urgent.length === 0) {
+        slaWatchlist.innerHTML = '<div class="empty-state">All open incidents are currently within their PWD SLA windows.</div>';
+      } else {
+        slaWatchlist.innerHTML = '';
+        urgent.slice(0, 20).forEach(item => {
+          const slaView = computeLiveSlaDisplay(item);
+          const row = document.createElement('div');
+          row.className = `sla-watch-item sla-${slaView.slaStatus}`;
+          row.innerHTML = `
+            <div class="sla-watch-main">
+              <div class="sla-watch-title-row">
+                <span class="sev-tag sev-${item.severity_score}">S-${item.severity_score}</span>
+                <span class="sla-watch-road">${escapeHtml(item.road_name)}</span>
+              </div>
+              <div class="sla-watch-meta">
+                <span>${escapeHtml(item.ward_id)}</span>
+                <span>•</span>
+                <span>Status: <strong>${escapeHtml(item.status)}</strong></span>
+                <span>•</span>
+                <span>Crew: ${escapeHtml(item.assigned_crew || 'Unassigned')}</span>
+              </div>
+            </div>
+            <div class="sla-watch-actions">
+              <span class="sla-pill sla-${slaView.slaStatus}">${escapeHtml(slaView.badgeText)}</span>
+              <button type="button" class="btn btn-sm btn-outline sla-inspect-btn">Inspect</button>
+            </div>
+          `;
+          const inspectBtn = row.querySelector('.sla-inspect-btn');
+          if (inspectBtn) {
+            inspectBtn.addEventListener('click', () => {
+              if (analyticsDrawer && analyticsDrawer.open) {
+                analyticsDrawer.close('inspect');
+              }
+              const fullAlert = state.alerts.find(a => a.event_id === item.event_id);
+              if (fullAlert) {
+                highlightIncidentCard(fullAlert.event_id, true);
+                openInspectionModal(fullAlert);
+              } else {
+                map.setView([item.latitude, item.longitude], 16, { animate: true });
+              }
+            });
+          }
+          slaWatchlist.appendChild(row);
+        });
+      }
+    }
+  }
+
+  function focusWardFromAnalytics(ward) {
+    if (analyticsDrawer && analyticsDrawer.open) {
+      analyticsDrawer.close('filter-ward');
+    }
+    state.activeTab = 'all';
+    feedTabs.forEach(t => t.classList.toggle('active', t.dataset.tab === 'all'));
+    state.filterWard = ward.ward_short;
+    if (filterWardEl) {
+      const hasOption = Array.from(filterWardEl.options).some(opt => opt.value === ward.ward_short);
+      filterWardEl.value = hasOption ? ward.ward_short : '';
+    }
+    applyFilters();
+
+    const wardPoints = state.filteredAlerts.map(a => [a.latitude, a.longitude]);
+    if (wardPoints.length > 0) {
+      map.fitBounds(L.latLngBounds(wardPoints), { padding: [50, 50], maxZoom: 15, animate: true });
+    }
+    showToast(`Focused on ${ward.ward_short} (Health: ${ward.health_score}/100)`, 'info');
+  }
+
+  async function loadWardAnalytics(showSpinner = false) {
+    if (showSpinner && wardLeaderboard) {
+      wardLeaderboard.innerHTML = `
+        <div class="loading-state">
+          <div class="spinner"></div>
+          <span>Calculating ward health metrics...</span>
+        </div>
+      `;
+    }
+    try {
+      const res = await fetch('/api/analytics/wards');
+      if (!res.ok) throw new Error('Failed to load ward analytics');
+      const data = await res.json();
+      state.wardAnalytics = data;
+      renderWardAnalytics(data);
+    } catch (e) {
+      console.error('Ward analytics error:', e);
+      if (wardLeaderboard) {
+        wardLeaderboard.innerHTML = `<div class="empty-state">Unable to load ward analytics: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+  }
+
+  function refreshAnalyticsIfOpen() {
+    if (analyticsDrawer && analyticsDrawer.open) {
+      loadWardAnalytics(false);
+    }
+  }
+
+  if (btnWardAnalytics && analyticsDrawer) {
+    btnWardAnalytics.addEventListener('click', () => {
+      if (!analyticsDrawer.open) {
+        analyticsDrawer.showModal();
+      }
+      loadWardAnalytics(true);
+    });
+
+    // Clear returnValue on close so stale button values never leak
+    analyticsDrawer.addEventListener('close', () => {
+      analyticsDrawer.returnValue = '';
+    });
+
+    // Fallback for browsers without native <dialog closedby="any"> support (e.g., Safari)
+    if (!('closedBy' in HTMLDialogElement.prototype)) {
+      const isOutsideDialog = (event, dialog) => {
+        const rect = dialog.getBoundingClientRect();
+        return (
+          event.clientX < rect.left ||
+          event.clientX > rect.right ||
+          event.clientY < rect.top ||
+          event.clientY > rect.bottom
+        );
+      };
+      let pressedOutside = false;
+      analyticsDrawer.addEventListener('pointerdown', (e) => {
+        pressedOutside = isOutsideDialog(e, analyticsDrawer);
+      });
+      analyticsDrawer.addEventListener('pointerup', (e) => {
+        if (pressedOutside && isOutsideDialog(e, analyticsDrawer)) {
+          analyticsDrawer.close();
+        }
+        pressedOutside = false;
+      });
+    }
+  }
+
+  if (btnRefreshAnalytics) {
+    btnRefreshAnalytics.addEventListener('click', () => {
+      loadWardAnalytics(true);
+      showToast('Refreshed ward road health & SLA metrics', 'info');
+    });
+  }
+
+  if (btnFilterOverdueFromDrawer) {
+    btnFilterOverdueFromDrawer.addEventListener('click', () => {
+      if (analyticsDrawer && analyticsDrawer.open) {
+        analyticsDrawer.close('filter-overdue');
+      }
+      state.activeTab = 'overdue';
+      feedTabs.forEach(t => t.classList.toggle('active', t.dataset.tab === 'overdue'));
+      applyFilters();
+      showToast('Filtered triage feed to SLA-breached incidents', 'warning');
+    });
+  }
+
+  // Keep live SLA countdown pills refreshed every 60 seconds
+  setInterval(() => {
+    if (state.alerts.length > 0) {
+      renderIncidentList();
+    }
+    if (analyticsDrawer && analyticsDrawer.open && state.wardAnalytics) {
+      renderWardAnalytics(state.wardAnalytics);
+    }
+  }, 60000);
 
   // Initial Boot
   loadStats();

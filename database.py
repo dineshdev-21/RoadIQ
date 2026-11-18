@@ -9,7 +9,13 @@ import math
 import os
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any, Tuple
-from severity import calculate_severity, get_severity_info
+from severity import (
+    calculate_severity,
+    get_severity_info,
+    compute_sla_status,
+    compute_ward_health_score,
+    health_grade,
+)
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "roadiq.db")
 
@@ -97,12 +103,20 @@ def find_spatial_duplicate(cursor, lat: float, lon: float, anomaly_class: str, t
             return dict(row)
     return None
 
-def row_to_dict(row: sqlite3.Row) -> dict:
+def row_to_dict(row: sqlite3.Row, now: Optional[datetime] = None) -> dict:
     d = dict(row)
     d["priority_flag"] = bool(d["priority_flag"])
     d["high_confidence"] = bool(d["high_confidence"])
     d["sensor_snapshot"] = json.loads(d["sensor_snapshot_json"]) if d.get("sensor_snapshot_json") else {}
     d["reporting_vehicles"] = json.loads(d["reporting_vehicles_json"]) if d.get("reporting_vehicles_json") else []
+    sla_info = compute_sla_status(
+        severity_score=d["severity_score"],
+        timestamp_iso=d["timestamp"],
+        status=d["status"],
+        resolved_at_iso=d.get("updated_at") if d["status"] == "Resolved" else None,
+        now=now,
+    )
+    d.update(sla_info)
     return d
 
 def insert_or_deduplicate(alert_data: dict) -> Tuple[dict, bool]:
@@ -232,6 +246,7 @@ def get_alerts(
     status: Optional[str] = None,
     search: Optional[str] = None,
     only_flagged: Optional[bool] = None,
+    sla_status: Optional[str] = None,
     limit: int = 100,
     offset: int = 0
 ) -> List[dict]:
@@ -260,13 +275,22 @@ def get_alerts(
         term = f"%{search}%"
         params.extend([term, term, term, term])
 
-    query += " ORDER BY priority_flag DESC, severity_score DESC, updated_at DESC LIMIT ? OFFSET ?"
-    params.extend([limit, offset])
+    query += " ORDER BY priority_flag DESC, severity_score DESC, updated_at DESC"
+    if not sla_status:
+        query += " LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
 
     cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
-    return [row_to_dict(r) for r in rows]
+
+    now = datetime.now(timezone.utc)
+    alerts = [row_to_dict(r, now=now) for r in rows]
+    if sla_status:
+        target = sla_status.strip().lower()
+        alerts = [a for a in alerts if a.get("sla_status") == target]
+        alerts = alerts[offset : offset + limit]
+    return alerts
 
 def get_alert_by_id(event_id: str) -> Optional[dict]:
     conn = get_connection()
@@ -407,6 +431,10 @@ def get_geojson_collection() -> dict:
                 "status": a["status"],
                 "confirmation_count": a["confirmation_count"],
                 "high_confidence": a["high_confidence"],
+                "sla_status": a.get("sla_status"),
+                "sla_hours": a.get("sla_hours"),
+                "sla_deadline": a.get("sla_deadline"),
+                "sla_remaining_minutes": a.get("sla_remaining_minutes"),
                 "sensor_snapshot": a["sensor_snapshot"],
                 "has_image": bool(a.get("image_base64"))
             }
@@ -417,6 +445,171 @@ def get_geojson_collection() -> dict:
         "type": "FeatureCollection",
         "features": features
     }
+
+
+def _extract_ward_short(ward_id: str) -> str:
+    """Extracts a concise ward prefix such as 'Ward 4' for filter dropdown matching."""
+    if not ward_id:
+        return "Unassigned"
+    parts = ward_id.split(" - ", 1)
+    return parts[0].strip() if parts else ward_id.strip()
+
+
+def get_ward_analytics(now: Optional[datetime] = None) -> dict:
+    """
+    Aggregates per-ward Road Health Scores, severity & class distributions,
+    and PWD SLA compliance metrics (breached, at-risk, on-track, met)
+    across the monitored municipal corridor.
+    """
+    current_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM alerts")
+    rows = cursor.fetchall()
+    conn.close()
+
+    alerts = [row_to_dict(r, now=current_utc) for r in rows]
+
+    severity_breakdown = {str(s): 0 for s in range(1, 6)}
+    status_breakdown = {
+        "New": 0,
+        "Under Review": 0,
+        "Dispatched": 0,
+        "In Repair": 0,
+        "Resolved": 0,
+    }
+
+    wards_map: Dict[str, List[dict]] = {}
+    sla_alerts: List[dict] = []
+
+    total_breached = 0
+    total_at_risk = 0
+    total_on_track = 0
+    total_open = 0
+    total_resolved = 0
+    depth_sum = 0.0
+
+    for a in alerts:
+        sev_key = str(a["severity_score"])
+        if sev_key in severity_breakdown:
+            severity_breakdown[sev_key] += 1
+
+        st = a.get("status") or "New"
+        status_breakdown[st] = status_breakdown.get(st, 0) + 1
+
+        depth_sum += float(a.get("estimated_depth_cm") or 0.0)
+
+        if st == "Resolved":
+            total_resolved += 1
+        else:
+            total_open += 1
+
+        sla_st = a.get("sla_status")
+        if sla_st == "breached":
+            total_breached += 1
+        elif sla_st == "at_risk":
+            total_at_risk += 1
+        elif sla_st == "on_track":
+            total_on_track += 1
+
+        if sla_st in ("breached", "at_risk"):
+            sla_alerts.append({
+                "event_id": a["event_id"],
+                "road_name": a["road_name"],
+                "ward_id": a["ward_id"],
+                "anomaly_class": a["anomaly_class"],
+                "severity_score": a["severity_score"],
+                "severity_label": a["severity_label"],
+                "status": st,
+                "assigned_crew": a.get("assigned_crew"),
+                "sla_hours": a["sla_hours"],
+                "sla_deadline": a["sla_deadline"],
+                "sla_remaining_minutes": a["sla_remaining_minutes"],
+                "sla_elapsed_pct": a["sla_elapsed_pct"],
+                "sla_status": sla_st,
+                "confirmation_count": a["confirmation_count"],
+                "latitude": a["latitude"],
+                "longitude": a["longitude"],
+            })
+
+        ward_key = a.get("ward_id") or "Unassigned Ward"
+        wards_map.setdefault(ward_key, []).append(a)
+
+    wards_list: List[dict] = []
+    for ward_id, ward_alerts in wards_map.items():
+        open_items = [x for x in ward_alerts if x.get("status") != "Resolved"]
+        resolved_items = [x for x in ward_alerts if x.get("status") == "Resolved"]
+        w_total = len(ward_alerts)
+        w_breached = sum(1 for x in open_items if x.get("sla_status") == "breached")
+        w_at_risk = sum(1 for x in open_items if x.get("sla_status") == "at_risk")
+        w_on_track = sum(1 for x in open_items if x.get("sla_status") == "on_track")
+        w_critical = sum(1 for x in open_items if x["severity_score"] >= 4)
+        w_confirmed = sum(1 for x in ward_alerts if x.get("high_confidence"))
+        w_avg_sev = round(sum(x["severity_score"] for x in ward_alerts) / w_total, 2) if w_total else 0.0
+        w_avg_depth = round(sum(float(x.get("estimated_depth_cm") or 0.0) for x in ward_alerts) / w_total, 1) if w_total else 0.0
+        w_compliance = round(((w_total - w_breached) / w_total) * 100.0, 1) if w_total else 100.0
+
+        w_score = compute_ward_health_score(open_items)
+        w_sev_dist = {str(s): 0 for s in range(1, 6)}
+        w_class_dist: Dict[str, int] = {}
+        for x in ward_alerts:
+            s_key = str(x["severity_score"])
+            if s_key in w_sev_dist:
+                w_sev_dist[s_key] += 1
+            cls = x.get("anomaly_class") or "Unknown"
+            w_class_dist[cls] = w_class_dist.get(cls, 0) + 1
+
+        wards_list.append({
+            "ward_id": ward_id,
+            "ward_short": _extract_ward_short(ward_id),
+            "health_score": w_score,
+            "health_grade": health_grade(w_score),
+            "total_alerts": w_total,
+            "open_alerts": len(open_items),
+            "resolved_alerts": len(resolved_items),
+            "critical_open": w_critical,
+            "sla_breached": w_breached,
+            "sla_at_risk": w_at_risk,
+            "sla_on_track": w_on_track,
+            "sla_compliance_pct": w_compliance,
+            "avg_severity": w_avg_sev,
+            "avg_depth_cm": w_avg_depth,
+            "confirmed_hotspots": w_confirmed,
+            "severity_distribution": w_sev_dist,
+            "class_distribution": w_class_dist,
+        })
+
+    # Sort worst health score first, then by breached SLA count descending
+    wards_list.sort(key=lambda w: (w["health_score"], -w["sla_breached"], -w["critical_open"]))
+
+    # Sort urgent SLA watchlist: most overdue (lowest remaining minutes) first
+    sla_alerts.sort(key=lambda item: (item["sla_remaining_minutes"], -item["severity_score"]))
+
+    total_alerts = len(alerts)
+    overall_health = round(sum(w["health_score"] for w in wards_list) / len(wards_list), 1) if wards_list else 100.0
+    overall_compliance = round(((total_alerts - total_breached) / total_alerts) * 100.0, 1) if total_alerts else 100.0
+    avg_depth = round(depth_sum / total_alerts, 1) if total_alerts else 0.0
+
+    return {
+        "generated_at": current_utc.isoformat(),
+        "corridor_summary": {
+            "overall_health_score": overall_health,
+            "overall_health_grade": health_grade(overall_health),
+            "total_alerts": total_alerts,
+            "open_alerts": total_open,
+            "resolved_alerts": total_resolved,
+            "sla_breached_count": total_breached,
+            "sla_at_risk_count": total_at_risk,
+            "sla_on_track_count": total_on_track,
+            "sla_compliance_pct": overall_compliance,
+            "avg_estimated_depth_cm": avg_depth,
+        },
+        "wards": wards_list,
+        "sla_alerts": sla_alerts,
+        "severity_breakdown": severity_breakdown,
+        "status_breakdown": status_breakdown,
+    }
+
 
 # Initialize schema on load
 init_db()
