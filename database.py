@@ -350,53 +350,37 @@ def get_stats() -> dict:
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT COUNT(*) FROM alerts")
-    total = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE anomaly_class = 'Pothole'")
-    potholes = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE anomaly_class = 'Manhole Cover'")
-    manholes = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE anomaly_class = 'Speed Bump'")
-    speed_bumps = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE anomaly_class = 'Rough Patch'")
-    rough_patches = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE severity_score >= 4 AND status != 'Resolved'")
-    critical = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE status = 'New'")
-    pending = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE status = 'In Repair'")
-    in_repair = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE status = 'Resolved'")
-    resolved = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE high_confidence = 1")
-    confirmed = cursor.fetchone()[0]
-
-    cursor.execute("SELECT AVG(severity_score) FROM alerts")
-    avg_sev = cursor.fetchone()[0] or 0.0
+    cursor.execute("""
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN anomaly_class = 'Pothole' THEN 1 ELSE 0 END) AS potholes,
+            SUM(CASE WHEN anomaly_class = 'Manhole Cover' THEN 1 ELSE 0 END) AS manholes,
+            SUM(CASE WHEN anomaly_class = 'Speed Bump' THEN 1 ELSE 0 END) AS speed_bumps,
+            SUM(CASE WHEN anomaly_class = 'Rough Patch' THEN 1 ELSE 0 END) AS rough_patches,
+            SUM(CASE WHEN severity_score >= 4 AND status != 'Resolved' THEN 1 ELSE 0 END) AS critical,
+            SUM(CASE WHEN status = 'New' THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN status = 'In Repair' THEN 1 ELSE 0 END) AS in_repair,
+            SUM(CASE WHEN status = 'Resolved' THEN 1 ELSE 0 END) AS resolved,
+            SUM(CASE WHEN high_confidence = 1 THEN 1 ELSE 0 END) AS confirmed,
+            AVG(severity_score) AS avg_severity
+        FROM alerts
+    """)
+    stats = cursor.fetchone()
 
     conn.close()
 
     return {
-        "total_events": total,
-        "total_potholes": potholes,
-        "total_manholes": manholes,
-        "total_speed_bumps": speed_bumps,
-        "total_rough_patches": rough_patches,
-        "critical_priority_count": critical,
-        "pending_dispatch_count": pending,
-        "in_repair_count": in_repair,
-        "resolved_count": resolved,
-        "multi_vehicle_confirmed": confirmed,
-        "avg_severity": round(avg_sev, 2),
+        "total_events": stats["total"],
+        "total_potholes": stats["potholes"] or 0,
+        "total_manholes": stats["manholes"] or 0,
+        "total_speed_bumps": stats["speed_bumps"] or 0,
+        "total_rough_patches": stats["rough_patches"] or 0,
+        "critical_priority_count": stats["critical"] or 0,
+        "pending_dispatch_count": stats["pending"] or 0,
+        "in_repair_count": stats["in_repair"] or 0,
+        "resolved_count": stats["resolved"] or 0,
+        "multi_vehicle_confirmed": stats["confirmed"] or 0,
+        "avg_severity": round(stats["avg_severity"] or 0.0, 2),
         "avg_edge_latency_ms": 87.0,  # Raspberry Pi 4 benchmark from DPR
         "overall_accuracy_pct": 94.3,  # 5-class field prototype from DPR
         "false_positive_rate_pct": 4.1,  # Day FPR from DPR

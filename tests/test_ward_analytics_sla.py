@@ -206,6 +206,19 @@ class TestWardAnalyticsDatabase(unittest.TestCase):
         self.assertIn("sla_deadline", props)
         self.assertIn("sla_remaining_minutes", props)
 
+    def test_get_stats_uses_complete_aggregate(self):
+        stats = database.get_stats()
+        self.assertEqual(stats["total_events"], 4)
+        self.assertEqual(stats["total_potholes"], 2)
+        self.assertEqual(stats["total_manholes"], 1)
+        self.assertEqual(stats["total_speed_bumps"], 1)
+        self.assertEqual(stats["total_rough_patches"], 0)
+        self.assertEqual(stats["critical_priority_count"], 2)
+        self.assertEqual(stats["pending_dispatch_count"], 2)
+        self.assertEqual(stats["in_repair_count"], 0)
+        self.assertEqual(stats["resolved_count"], 1)
+        self.assertEqual(stats["avg_severity"], 3.5)
+
 
 if __name__ == "__main__":
     unittest.main()
