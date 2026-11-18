@@ -439,6 +439,41 @@
             </div>
           </div>
 
+          <!-- Predictive Risk Intelligence Card -->
+          <div class="telemetry-card predictive-risk-card" id="predictiveRiskCard" style="display:none;">
+            <div class="card-heading">
+              <span>🤖 Predictive Risk Intelligence</span>
+              <span class="badge-formula" id="predictiveRiskBadge">ML Model</span>
+            </div>
+            <div class="predictive-risk-display">
+              <div class="risk-gauge" id="riskGaugeEl">
+                <span class="risk-label-text" id="predictedRiskLabel">—</span>
+              </div>
+              <div class="risk-details-col">
+                <div class="risk-detail-row">
+                  <span class="risk-detail-name">Risk Class</span>
+                  <span class="risk-detail-val" id="predictedRiskClass">—</span>
+                </div>
+                <div class="risk-detail-row">
+                  <span class="risk-detail-name">Confidence</span>
+                  <span class="risk-detail-val" id="predictedConfidence">—</span>
+                </div>
+                <div class="risk-detail-row">
+                  <span class="risk-detail-name">Maintenance Priority</span>
+                  <span class="risk-detail-val" id="predictedPriority">—</span>
+                </div>
+                <div class="risk-prob-bars" id="riskProbBars">
+                  <div class="prob-bar-row"><span>Low</span><div class="prob-bar"><div class="prob-fill low" id="probBarLow"></div></div><span id="probLowVal">—</span></div>
+                  <div class="prob-bar-row"><span>Med</span><div class="prob-bar"><div class="prob-fill medium" id="probBarMed"></div></div><span id="probMedVal">—</span></div>
+                  <div class="prob-bar-row"><span>High</span><div class="prob-bar"><div class="prob-fill high" id="probBarHigh"></div></div><span id="probHighVal">—</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="risk-unavailable-msg" id="riskUnavailableMsg" style="display:none;">
+              <span>⚠️ ML model not trained yet. Run <code>python ml/train.py</code> to enable predictions.</span>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>

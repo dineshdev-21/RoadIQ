@@ -31,6 +31,16 @@ from database import (
 )
 from seed_data import seed_database, LOCATIONS, VEHICLE_FLEET, generate_svg_defect_image
 from severity import calculate_severity
+from pydantic import BaseModel, Field as PydanticField
+
+# Predictive Risk Intelligence imports (loaded lazily — model may not exist yet)
+try:
+    from ml.predict import RiskPredictor
+    from ml.model import XGB_MODEL_PATH
+    _ML_AVAILABLE = True
+except ImportError:
+    _ML_AVAILABLE = False
+    XGB_MODEL_PATH = "models/xgb_risk_model.joblib"
 
 app = FastAPI(
     title="RoadIQ Municipal Command Center API",
@@ -72,6 +82,9 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Predictive Risk Intelligence - loaded once at startup
+risk_predictor: Optional[RiskPredictor if _ML_AVAILABLE else object] = None  # type: ignore
+
 # Mount static assets
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 os.makedirs(STATIC_DIR, exist_ok=True)
@@ -79,7 +92,15 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.on_event("startup")
 def on_startup():
+    global risk_predictor
     init_db()
+    # Predictive Risk Intelligence — initialise if ML module is available
+    if _ML_AVAILABLE:
+        import os as _os
+        model_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), XGB_MODEL_PATH)
+        risk_predictor = RiskPredictor(model_path=model_path)
+    else:
+        risk_predictor = None
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard():
@@ -87,6 +108,19 @@ async def serve_dashboard():
     if os.path.exists(index_path):
         return FileResponse(index_path)
     return HTMLResponse("<h1>RoadIQ API is running. Place index.html in /static</h1>")
+
+# ---------------------------------------------------------------------------
+# Predictive Risk Intelligence — Request model
+# ---------------------------------------------------------------------------
+class RiskPredictionRequest(BaseModel):
+    vehicle_speed: float = PydanticField(..., ge=0, le=180, description="Vehicle speed in km/h")
+    imu_z_rms: float = PydanticField(..., ge=0, description="Z-axis RMS acceleration in g")
+    gyro_x_peak: float = PydanticField(0.0, description="Gyro X peak in deg/s")
+    peak_frequency: float = PydanticField(..., ge=0, description="FFT peak frequency in Hz")
+    kurtosis: float = PydanticField(3.0, description="Spectral kurtosis")
+    suspension_deflection_d: float = PydanticField(..., ge=0, description="Suspension deflection in mm")
+    suspension_onset_rate_r: float = PydanticField(..., ge=0, description="Suspension onset rate in mm/ms")
+    visual_confidence: float = PydanticField(0.92, ge=0.0, le=1.0, description="Visual model confidence")
 
 @app.get("/api/health")
 def health_check():
@@ -350,6 +384,30 @@ async def simulate_edge_event(
 def reseed_data():
     seed_database()
     return {"status": "success", "message": "Database reseeded with fresh 12 km Punjab road corridor data."}
+
+# ---------------------------------------------------------------------------
+# Predictive Risk Intelligence — ML endpoint
+# ---------------------------------------------------------------------------
+@app.post("/api/predict-risk")
+def predict_risk(request: RiskPredictionRequest):
+    """
+    Predictive Road Risk Intelligence endpoint.
+    Returns ML-predicted risk category (Low/Medium/High) with confidence
+    for a given set of sensor readings.
+    This is SEPARATE from the existing deterministic severity formula.
+    """
+    is_available = getattr(risk_predictor, "available", getattr(risk_predictor, "model_available", False)) if risk_predictor else False
+    if not is_available:
+        raise HTTPException(
+            status_code=503,
+            detail="Predictive risk model not available. Run ml/train.py first to train the model."
+        )
+    sensor_dict = request.model_dump()
+    try:
+        result = risk_predictor.predict(sensor_dict)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return result
 
 @app.websocket("/ws/live")
 async def websocket_endpoint(websocket: WebSocket):

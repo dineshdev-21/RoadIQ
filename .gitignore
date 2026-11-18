@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
+*.pyc
 *$py.class
 .Python
 .venv/
@@ -10,3 +11,13 @@ ENV/
 .DS_Store
 .idea/
 .vscode/
+
+# Models and data artifacts
+models/*.joblib
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+reports/*.png
+reports/*.json
+!reports/.gitkeep

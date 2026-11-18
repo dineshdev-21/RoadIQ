@@ -641,6 +641,86 @@ document.addEventListener('DOMContentLoaded', () => {
     applyFilters();
   }
 
+  // Predictive Risk Intelligence
+  async function fetchPredictiveRisk(alert) {
+    const snap = alert.sensor_snapshot || {};
+    const card = document.getElementById('predictiveRiskCard');
+    const unavailMsg = document.getElementById('riskUnavailableMsg');
+    
+    if (!card) return;
+    card.style.display = 'block';
+    
+    const payload = {
+      vehicle_speed: alert.vehicle_speed || 45.0,
+      imu_z_rms: snap.imu_z_rms || 1.0,
+      gyro_x_peak: snap.gyro_x_peak || 15.0,
+      peak_frequency: snap.peak_frequency || 12.0,
+      kurtosis: snap.kurtosis || 4.0,
+      suspension_deflection_d: snap.suspension_deflection_d || 10.0,
+      suspension_onset_rate_r: snap.suspension_onset_rate_r || 0.8,
+      visual_confidence: snap.visual_confidence || 0.92
+    };
+    
+    try {
+      const resp = await fetch('/api/predict-risk', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      
+      if (resp.status === 503) {
+        if (unavailMsg) unavailMsg.style.display = 'block';
+        return;
+      }
+      if (unavailMsg) unavailMsg.style.display = 'none';
+      
+      const data = await resp.json();
+      if (!data.model_available) {
+        if (unavailMsg) unavailMsg.style.display = 'block';
+        return;
+      }
+      
+      // Update UI
+      const gaugeEl = document.getElementById('riskGaugeEl');
+      const labelEl = document.getElementById('predictedRiskLabel');
+      const classEl = document.getElementById('predictedRiskClass');
+      const confEl = document.getElementById('predictedConfidence');
+      const prioEl = document.getElementById('predictedPriority');
+      
+      const risk = data.predicted_risk || 'Unknown';
+      const cls = data.risk_class ?? '—';
+      const conf = data.confidence != null ? (data.confidence * 100).toFixed(1) + '%' : '—';
+      const prioMap = {Low: 'Schedule within 7 days', Medium: 'Inspect within 72h', High: 'Priority dispatch (24-48h)'};
+      
+      if (labelEl) labelEl.textContent = risk;
+      if (classEl) classEl.textContent = `Class ${cls}`;
+      if (confEl) confEl.textContent = conf;
+      if (prioEl) prioEl.textContent = prioMap[risk] || '—';
+      
+      if (gaugeEl) {
+        gaugeEl.className = 'risk-gauge risk-' + risk.toLowerCase();
+      }
+      
+      const probs = data.probabilities || {};
+      const setBar = (id, fillId, val) => {
+        const el = document.getElementById(id);
+        const fill = document.getElementById(fillId);
+        if (el) el.textContent = val != null ? (val * 100).toFixed(0) + '%' : '—';
+        if (fill) fill.style.width = val != null ? (val * 100) + '%' : '0%';
+      };
+      setBar('probLowVal', 'probBarLow', probs.low);
+      setBar('probMedVal', 'probBarMed', probs.medium);
+      setBar('probHighVal', 'probBarHigh', probs.high);
+      
+    } catch (err) {
+      console.warn('Predictive risk fetch failed:', err);
+      if (unavailMsg) {
+        unavailMsg.textContent = '⚠️ Could not fetch ML prediction.';
+        unavailMsg.style.display = 'block';
+      }
+    }
+  }
+
   // Open Detailed Modal & Populate Telemetry
   function openInspectionModal(alert) {
     state.selectedAlert = alert;
@@ -717,12 +797,17 @@ document.addEventListener('DOMContentLoaded', () => {
       : `🛡️ Sighted by ${alert.confirmation_count} vehicle(s)`;
 
     modalBackdrop.classList.add('open');
+
+    // Fetch predictive risk for this alert
+    fetchPredictiveRisk(alert);
   }
 
   function closeInspectionModal() {
     modalBackdrop.classList.remove('open');
     state.selectedAlert = null;
     document.querySelectorAll('.incident-card').forEach(c => c.classList.remove('active-selected'));
+    const riskCard = document.getElementById('predictiveRiskCard');
+    if (riskCard) riskCard.style.display = 'none';
   }
 
   // Expose global inspector for popup onclick

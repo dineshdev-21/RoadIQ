@@ -2127,3 +2127,26 @@ dialog.analytics-drawer::backdrop {
     align-items: center;
   }
 }
+
+/* Predictive Risk Intelligence Panel */
+.predictive-risk-card { border-top: 2px solid #38BDF8; }
+.predictive-risk-display { display: flex; gap: 1rem; align-items: flex-start; padding: 0.75rem 0; }
+.risk-gauge { min-width: 80px; height: 80px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.85rem; border: 3px solid #334155; text-align: center; }
+.risk-gauge.risk-low { background: #064e3b; border-color: #10B981; color: #34D399; }
+.risk-gauge.risk-medium { background: #451a03; border-color: #F59E0B; color: #FCD34D; }
+.risk-gauge.risk-high { background: #450a0a; border-color: #EF4444; color: #FCA5A5; }
+.risk-details-col { flex: 1; }
+.risk-detail-row { display: flex; justify-content: space-between; padding: 0.2rem 0; font-size: 0.8rem; border-bottom: 1px solid #1e293b; }
+.risk-detail-name { color: #94A3B8; }
+.risk-detail-val { font-weight: 600; color: #E2E8F0; }
+.risk-prob-bars { margin-top: 0.5rem; }
+.prob-bar-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; padding: 0.15rem 0; }
+.prob-bar-row span:first-child { width: 2rem; color: #94A3B8; }
+.prob-bar-row span:last-child { width: 3rem; text-align: right; color: #CBD5E1; }
+.prob-bar { flex: 1; height: 8px; background: #1e293b; border-radius: 4px; overflow: hidden; }
+.prob-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
+.prob-fill.low { background: #10B981; }
+.prob-fill.medium { background: #F59E0B; }
+.prob-fill.high { background: #EF4444; }
+.risk-unavailable-msg { font-size: 0.78rem; color: #94A3B8; padding: 0.5rem; background: #0f172a; border-radius: 4px; }
+.risk-unavailable-msg code { color: #38BDF8; }

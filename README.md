@@ -172,3 +172,143 @@ When multiple fleet vehicles (e.g., Punjab Roadways buses, police patrol units, 
    - The `confirmation_count` increments.
    - The reporting vehicle ID is appended to the audit trail.
    - If $\text{confirmation\_count} \ge 3$, the ticket automatically receives the **Multi-Vehicle High-Confidence Shield (🛡️)**, raising municipal repair priority.
+
+---
+
+## 🤖 Predictive Road Risk Intelligence (ML Contribution)
+
+> **Contributor:** Sathvik
+> **Branch:** `feature/predictive-road-risk`
+
+### Overview
+This contribution adds an independent Machine Learning module that predicts the **risk category** of a detected road anomaly to assist municipal maintenance prioritization.
+
+The existing deterministic severity formula `S = clip(round(0.15·D + 2.0·R), 1, 5)` remains unchanged.
+This module adds a parallel, probabilistic risk prediction layer.
+
+### Target Classes
+| Label | Class | Municipal Action |
+|:---:|:---|:---|
+| **0** | Low Risk | Schedule repair within 7 days |
+| **1** | Medium Risk | Inspect and dispatch within 72 hours |
+| **2** | High Risk | Priority dispatch within 24–48 hours |
+
+### ML Architecture
+
+```mermaid
+graph TD
+    A[Sensor Snapshot + Vehicle Speed] --> B[Feature Extraction\n8-dimensional feature vector]
+    B --> C[StandardScaler\nPreprocessing]
+    C --> D1[Random Forest Classifier\nn_estimators=200, class_weight=balanced]
+    C --> D2[XGBoost Classifier\nn_estimators=200, lr=0.1, hist]
+    D1 --> E[Model Comparison & Evaluation]
+    D2 --> E
+    E --> F[Best Model Saved\nmodels/xgb_risk_model.joblib]
+    F --> G[POST /api/predict-risk\nFastAPI Inference Endpoint]
+```
+
+### Input Features
+| Feature | Unit | Description |
+|:---|:---|:---|
+| `vehicle_speed` | km/h | Vehicle speed at trigger moment |
+| `imu_z_rms` | g | Z-axis RMS acceleration (MPU-6050) |
+| `gyro_x_peak` | deg/s | X-axis gyroscope peak |
+| `peak_frequency` | Hz | FFT peak frequency (8–20 Hz = pothole signature) |
+| `kurtosis` | — | Spectral kurtosis (impulsive shock indicator) |
+| `suspension_deflection_d` | mm | Potentiometer maximum deflection |
+| `suspension_onset_rate_r` | mm/ms | Suspension deflection onset rate |
+| `visual_confidence` | [0, 1] | MobileNetV2 visual classifier confidence |
+
+### Dataset & Labelling Transparency
+
+> ⚠️ **IMPORTANT:** The 3,200 labelled field events referenced in the original README's headline benchmark table are **not present** in this repository. The repository contains **49 synthetically seeded events** in `roadiq.db`.
+>
+> This ML pipeline is built on those 49 synthetic records for **demonstration and pipeline validation purposes only**. Metrics produced by running `ml/train.py` and `ml/evaluate.py` reflect synthetic data performance and **should not be presented as real-world field accuracy**.
+
+**Risk Label Derivation** (multi-signal, not pure severity-formula mapping):
+- `severity_score ≤ 2` AND `imu_z_rms < 1.0 g` → **Low Risk (0)**
+- `severity_score ≥ 4` AND `imu_z_rms ≥ 1.2 g` → **High Risk (2)**
+- All other combinations → **Medium Risk (1)**
+
+This prevents pure target leakage: both the mechanical severity score and the raw IMU reading must jointly confirm the label.
+
+### Training & Evaluation
+
+```bash
+# 1. Create virtual environment
+python -m venv .venv
+.venv\Scripts\activate      # Windows
+# source .venv/bin/activate   # Linux/macOS
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Train models (output saved to models/)
+python ml/train.py
+
+# 4. Evaluate models (output saved to reports/)
+python ml/evaluate.py
+```
+
+### API Endpoint
+
+```bash
+POST /api/predict-risk
+Content-Type: application/json
+
+{
+  "vehicle_speed": 46.5,
+  "imu_z_rms": 1.78,
+  "gyro_x_peak": 26.4,
+  "peak_frequency": 14.8,
+  "kurtosis": 6.2,
+  "suspension_deflection_d": 22.4,
+  "suspension_onset_rate_r": 1.75,
+  "visual_confidence": 0.96
+}
+```
+
+**Response:**
+```json
+{
+  "predicted_risk": "High",
+  "risk_class": 2,
+  "confidence": 0.87,
+  "probabilities": {
+    "low": 0.03,
+    "medium": 0.10,
+    "high": 0.87
+  },
+  "model_available": true
+}
+```
+
+Returns `503 Service Unavailable` if no trained model exists.
+
+### Model Limitations
+- Trained on **synthetic data only** — not validated against field measurements.
+- 49 training samples is insufficient for production generalisation.
+- No temporal features (time of day, weather, season) included.
+- For production use, collect ≥ 500 independently labelled road assessments from multiple corridors.
+
+### Running Tests
+
+```bash
+.venv\Scripts\python.exe -m pytest tests/ -v
+```
+
+### Files Added by This Contribution
+
+| Path | Description |
+|:---|:---|
+| `ml/__init__.py` | ML package marker |
+| `ml/features.py` | Feature extraction & labelling |
+| `ml/model.py` | Model constants & pipeline builders |
+| `ml/train.py` | Training script (RF + XGBoost) |
+| `ml/evaluate.py` | Evaluation metrics & visualisations |
+| `ml/predict.py` | Inference module (RiskPredictor) |
+| `tests/test_features.py` | Feature extraction unit tests |
+| `tests/test_prediction.py` | Prediction module unit tests |
+| `tests/test_api.py` | FastAPI endpoint integration tests |
+| `reports/` | Evaluation charts and metrics JSON |
+| `models/` | Trained model artefacts (`.joblib`) |
