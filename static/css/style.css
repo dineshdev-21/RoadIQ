@@ -75,6 +75,9 @@
 }
 
 /* Base Reset */
+html {
+  scroll-behavior: smooth;
+}
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -289,6 +292,7 @@ body {
 
 .btn-secondary:hover {
   background: rgba(255, 255, 255, 0.14);
+  transform: translateY(-1px);
 }
 
 .btn-ghost {
@@ -309,6 +313,7 @@ body {
 }
 
 .btn-outline:hover {
+  transform: translateY(-1px);
   border-color: var(--accent-cyan);
   color: var(--accent-cyan);
 }
@@ -316,6 +321,10 @@ body {
 .btn-sm {
   padding: 4px 10px;
   font-size: 11.5px;
+}
+
+.btn:active {
+  transform: translateY(0);
 }
 
 .icon-only {
