@@ -1030,10 +1030,22 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Export CSV
+  // Export CSV (preserves active filters)
   btnExportCsv.addEventListener('click', () => {
-    window.location.href = '/api/export/csv';
-    showToast('Downloading PWD Municipal Work Order CSV...', 'success');
+    const params = new URLSearchParams();
+    if (state.filterSeverity) params.append('severity', state.filterSeverity);
+    if (state.filterClass) params.append('anomaly_class', state.filterClass);
+    if (state.filterWard) params.append('ward_id', state.filterWard);
+    if (state.searchQuery) params.append('search', state.searchQuery);
+    if (state.activeTab === 'critical') params.append('only_flagged', 'true');
+    else if (state.activeTab === 'overdue') params.append('sla_status', 'breached');
+    else if (state.activeTab === 'dispatched') params.append('status', 'Dispatched');
+    else if (state.activeTab === 'resolved') params.append('status', 'Resolved');
+
+    const queryStr = params.toString();
+    const exportUrl = queryStr ? `/api/export/csv?${queryStr}` : '/api/export/csv';
+    window.location.href = exportUrl;
+    showToast(queryStr ? 'Downloading filtered PWD Work Order CSV...' : 'Downloading PWD Municipal Work Order CSV...', 'success');
   });
 
   // Reseed Data
