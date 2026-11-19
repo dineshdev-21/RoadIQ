@@ -167,9 +167,27 @@ def list_alerts(
     return {"count": len(alerts), "alerts": alerts}
 
 @app.get("/api/alerts/geojson")
-def fetch_geojson():
-    """Returns GeoJSON FeatureCollection directly consumable by Leaflet.js"""
-    return get_geojson_collection()
+def fetch_geojson(
+    severity: Optional[int] = Query(None, ge=1, le=5, description="Filter by severity 1-5"),
+    anomaly_class: Optional[str] = Query(None, description="Pothole, Manhole Cover, Speed Bump, Rough Patch"),
+    ward_id: Optional[str] = Query(None, description="Filter by ward name or circle"),
+    status: Optional[str] = Query(None, description="New, Under Review, Dispatched, In Repair, Resolved"),
+    search: Optional[str] = Query(None, description="Keyword search road name, ward, or notes"),
+    only_flagged: Optional[bool] = Query(None, description="Only critical/flagged priority S=4-5 alerts"),
+    sla_status: Optional[str] = Query(None, description="Filter by SLA status: breached, at_risk, on_track, met"),
+    limit: int = Query(500, ge=1, le=1000)
+):
+    """Returns GeoJSON FeatureCollection directly consumable by Leaflet.js with optional filter support"""
+    return get_geojson_collection(
+        severity=severity,
+        anomaly_class=anomaly_class,
+        ward_id=ward_id,
+        status=status,
+        search=search,
+        only_flagged=only_flagged,
+        sla_status=sla_status,
+        limit=limit
+    )
 
 @app.get("/api/alerts/{event_id}")
 def fetch_alert(event_id: str):
@@ -234,9 +252,27 @@ async def remove_alert(event_id: str):
     return {"status": "success", "deleted_id": event_id}
 
 @app.get("/api/export/csv")
-def export_csv():
-    """Generates official PWD municipal work order CSV export for maintenance crews"""
-    alerts = get_alerts(limit=1000)
+def export_csv(
+    severity: Optional[int] = Query(None, ge=1, le=5, description="Filter by severity 1-5"),
+    anomaly_class: Optional[str] = Query(None, description="Pothole, Manhole Cover, Speed Bump, Rough Patch"),
+    ward_id: Optional[str] = Query(None, description="Filter by ward name or circle"),
+    status: Optional[str] = Query(None, description="New, Under Review, Dispatched, In Repair, Resolved"),
+    search: Optional[str] = Query(None, description="Keyword search road name, ward, or notes"),
+    only_flagged: Optional[bool] = Query(None, description="Only critical/flagged priority S=4-5 alerts"),
+    sla_status: Optional[str] = Query(None, description="Filter by SLA status: breached, at_risk, on_track, met"),
+    limit: int = Query(2000, ge=1, le=5000)
+):
+    """Generates official PWD municipal work order CSV export for maintenance crews with optional filter support"""
+    alerts = get_alerts(
+        severity=severity,
+        anomaly_class=anomaly_class,
+        ward_id=ward_id,
+        status=status,
+        search=search,
+        only_flagged=only_flagged,
+        sla_status=sla_status,
+        limit=limit
+    )
 
     output = io.StringIO()
     writer = csv.writer(output)

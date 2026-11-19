@@ -137,12 +137,20 @@ curl -X POST http://127.0.0.1:8000/api/simulator/trigger
 
 ### Export PWD Municipal Work Orders (CSV)
 ```bash
+# Export all municipal work orders
 curl -O http://127.0.0.1:8000/api/export/csv
+
+# Export filtered by Ward, Severity, or SLA Status (e.g., overdue repairs in Ward 4)
+curl -O "http://127.0.0.1:8000/api/export/csv?ward_id=Ward+4&sla_status=breached"
 ```
 
 ### Fetch GIS GeoJSON FeatureCollection
 ```bash
+# Fetch all GeoJSON points for Leaflet.js
 curl -s http://127.0.0.1:8000/api/alerts/geojson
+
+# Fetch filtered GeoJSON points (e.g., only Critical/Flagged potholes)
+curl -s "http://127.0.0.1:8000/api/alerts/geojson?anomaly_class=Pothole&only_flagged=true"
 ```
 
 ### Fetch Ward Road Health & SLA Compliance Analytics

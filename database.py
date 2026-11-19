@@ -75,6 +75,8 @@ def haversine_distance_meters(lat1: float, lon1: float, lat2: float, lon2: float
 
     a = math.sin(delta_phi / 2.0) ** 2 + \
         math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2.0) ** 2
+    # Guard against floating point inaccuracies pushing a slightly outside [0.0, 1.0]
+    a = min(1.0, max(0.0, a))
     c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
 
     return R * c
@@ -86,7 +88,8 @@ def find_spatial_duplicate(cursor, lat: float, lon: float, anomaly_class: str, t
     """
     # 1 deg lat ~ 111,000 m. 15m is ~ 0.00015 deg
     lat_delta = (threshold_meters * 1.5) / 111000.0
-    lon_delta = (threshold_meters * 1.5) / (111000.0 * math.cos(math.radians(lat)))
+    cos_lat = max(abs(math.cos(math.radians(lat))), 1e-6)
+    lon_delta = (threshold_meters * 1.5) / (111000.0 * cos_lat)
 
     cursor.execute("""
         SELECT * FROM alerts 
@@ -387,9 +390,29 @@ def get_stats() -> dict:
         "scanned_corridor_km": 12.0  # Punjab 12 km test corridor
     }
 
-def get_geojson_collection() -> dict:
-    """Generates GeoJSON FeatureCollection for Leaflet.js with rich properties"""
-    alerts = get_alerts(limit=500)
+def get_geojson_collection(
+    severity: Optional[int] = None,
+    anomaly_class: Optional[str] = None,
+    ward_id: Optional[str] = None,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+    only_flagged: Optional[bool] = None,
+    sla_status: Optional[str] = None,
+    limit: int = 500,
+    offset: int = 0
+) -> dict:
+    """Generates GeoJSON FeatureCollection for Leaflet.js with rich properties and optional filtering"""
+    alerts = get_alerts(
+        severity=severity,
+        anomaly_class=anomaly_class,
+        ward_id=ward_id,
+        status=status,
+        search=search,
+        only_flagged=only_flagged,
+        sla_status=sla_status,
+        limit=limit,
+        offset=offset
+    )
     features = []
 
     for a in alerts:
