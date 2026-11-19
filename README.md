@@ -3,6 +3,14 @@
 **Multi-Sensor Fusion Framework for Real-Time Pothole Detection, Classification, and Automated Municipal Reporting using Edge AI**  
 *Lead Author & Inventor:* Budavarapu Dinesh, Lovely Professional University (LPU), Punjab.
 
+<p align="left">
+  <img src="https://img.shields.io/badge/FastAPI-0.110+-009688.svg?style=flat&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/Python-3.9+-3776AB.svg?style=flat&logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/Leaflet-1.9.4-199900.svg?style=flat&logo=leaflet&logoColor=white" alt="Leaflet" />
+  <img src="https://img.shields.io/badge/Edge%20AI-Raspberry%20Pi%204-C51A4A.svg?style=flat&logo=raspberrypi&logoColor=white" alt="Raspberry Pi" />
+  <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License" />
+</p>
+
 ---
 
 ## 🌟 Executive Summary
@@ -320,3 +328,16 @@ Returns `503 Service Unavailable` if no trained model exists.
 | `tests/test_api.py` | FastAPI endpoint integration tests |
 | `reports/` | Evaluation charts and metrics JSON |
 | `models/` | Trained model artefacts (`.joblib`) |
+
+---
+
+## 🎨 UI/UX & Cosmetic Enhancements
+
+> **Contributor:** Harsha Vardhan  
+> **Branch:** `harsha-vardhan`  
+
+### Improvements
+- **Dashboard Branding & Typography**: Added versioning and subtle typography polish to header badges.
+- **Favicon Integration**: Added browser tab favicon for instant recognition in municipal command workflows.
+- **Interaction Feedback**: Added smooth scrolling, button elevation transitions (`translateY(-1px)`), and active state resets.
+- **Repository Documentation**: Added technology stack shields and enhanced contributor documentation.
