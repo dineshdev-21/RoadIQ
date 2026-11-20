@@ -1,0 +1,27 @@
+[
+ {
+  "mode": "redesign",
+  "depth": "full",
+  "scope": "app",
+  "shape": "app screen",
+  "theme": "furrow",
+  "axes": "light/grotesk-sans/warm",
+  "nav": "top bar",
+  "footer": "none",
+  "imagery": "product data, real map tiles, dashcam frames on demand",
+  "photos": [],
+  "signature": "the repair queue ranked by severity beside the corridor map",
+  "sections": [
+   "bar",
+   "figures",
+   "repair queue",
+   "map",
+   "inspector"
+  ],
+  "waived": [
+   "39b"
+  ],
+  "prompt": "municipal road defect triage console",
+  "date": "2026-11-20"
+ }
+]

@@ -97,8 +97,19 @@ def find_spatial_duplicate(cursor, lat: float, lon: float, anomaly_class: str, t
             return dict(row)
     return None
 
+# Every column but the dashcam image, which only the single-alert endpoint returns
+LIST_COLUMNS = """
+    event_id, timestamp, latitude, longitude, vehicle_id, vehicle_speed,
+    anomaly_class, severity_score, severity_label, priority_flag,
+    municipal_action, estimated_depth_cm, sensor_snapshot_json, ward_id,
+    road_name, status, assigned_crew, notes, confirmation_count,
+    high_confidence, reporting_vehicles_json, created_at, updated_at,
+    COALESCE(image_base64, '') != '' AS has_image
+"""
+
 def row_to_dict(row: sqlite3.Row) -> dict:
     d = dict(row)
+    d["has_image"] = bool(d["has_image"]) if "has_image" in d else bool(d.get("image_base64"))
     d["priority_flag"] = bool(d["priority_flag"])
     d["high_confidence"] = bool(d["high_confidence"])
     d["sensor_snapshot"] = json.loads(d["sensor_snapshot_json"]) if d.get("sensor_snapshot_json") else {}
@@ -238,7 +249,7 @@ def get_alerts(
     conn = get_connection()
     cursor = conn.cursor()
 
-    query = "SELECT * FROM alerts WHERE 1=1"
+    query = f"SELECT {LIST_COLUMNS} FROM alerts WHERE 1=1"
     params = []
 
     if severity is not None:
@@ -324,42 +335,25 @@ def delete_alert(event_id: str) -> bool:
 
 def get_stats() -> dict:
     conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT COUNT(*) FROM alerts")
-    total = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE anomaly_class = 'Pothole'")
-    potholes = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE anomaly_class = 'Manhole Cover'")
-    manholes = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE anomaly_class = 'Speed Bump'")
-    speed_bumps = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE anomaly_class = 'Rough Patch'")
-    rough_patches = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE severity_score >= 4 AND status != 'Resolved'")
-    critical = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE status = 'New'")
-    pending = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE status = 'In Repair'")
-    in_repair = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE status = 'Resolved'")
-    resolved = cursor.fetchone()[0]
-
-    cursor.execute("SELECT COUNT(*) FROM alerts WHERE high_confidence = 1")
-    confirmed = cursor.fetchone()[0]
-
-    cursor.execute("SELECT AVG(severity_score) FROM alerts")
-    avg_sev = cursor.fetchone()[0] or 0.0
-
+    row = conn.execute("""
+        SELECT
+            COUNT(*),
+            SUM(anomaly_class = 'Pothole'),
+            SUM(anomaly_class = 'Manhole Cover'),
+            SUM(anomaly_class = 'Speed Bump'),
+            SUM(anomaly_class = 'Rough Patch'),
+            SUM(severity_score >= 4 AND status != 'Resolved'),
+            SUM(status = 'New'),
+            SUM(status = 'In Repair'),
+            SUM(status = 'Resolved'),
+            SUM(high_confidence = 1),
+            AVG(severity_score)
+        FROM alerts
+    """).fetchone()
     conn.close()
+
+    (total, potholes, manholes, speed_bumps, rough_patches, critical,
+     pending, in_repair, resolved, confirmed, avg_sev) = (v or 0 for v in row)
 
     return {
         "total_events": total,
@@ -408,7 +402,7 @@ def get_geojson_collection() -> dict:
                 "confirmation_count": a["confirmation_count"],
                 "high_confidence": a["high_confidence"],
                 "sensor_snapshot": a["sensor_snapshot"],
-                "has_image": bool(a.get("image_base64"))
+                "has_image": a["has_image"]
             }
         }
         features.append(feature)

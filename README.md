@@ -92,7 +92,7 @@ $$S = \text{clip}\left(\text{round}(0.15 \cdot D + 2.0 \cdot R), 1, 5\right)$$
 - FastAPI, Uvicorn, Pydantic, WebSockets
 
 ```bash
-cd /Users/dinesh1121/Projects/RoadIQ
+cd RoadIQ
 pip install -r requirements.txt
 ```
 
@@ -100,7 +100,30 @@ pip install -r requirements.txt
 ```bash
 python3 -m uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ```
-Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)** in any modern browser.
+Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)** in any modern browser. The dashboard is prebuilt into `static/`, so Node is not needed to run it.
+
+### 3. Work on the dashboard (Node 20+)
+The dashboard source is in `web/`: Vite, Preact and TypeScript, with Leaflet, leaflet.heat and leaflet.markercluster from npm.
+
+```bash
+cd web
+npm install
+npm run dev     # http://127.0.0.1:5180, proxying /api and /ws to the server on port 8010
+npm run build   # type-checks, then writes the production build into ../static
+```
+
+Commit the rebuilt `static/` with your source changes.
+
+### 4. Tests
+```bash
+pip install -r requirements-dev.txt
+python3 -m pytest tests     # API contract: lean lists, image on demand, live events, stats, gzip
+cd web && npm test          # queue filtering, URL state, ordering, live updates
+```
+
+### Payload notes
+- `GET /api/alerts`, the GeoJSON and CSV exports, and every WebSocket event leave out `image_base64` and carry `has_image` instead. `GET /api/alerts/{event_id}` still returns the dashcam image, and the dashboard fetches it when a report is opened.
+- Responses over 1 KB are gzipped.
 
 ---
 

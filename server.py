@@ -13,6 +13,7 @@ import uuid
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
 import os
@@ -45,6 +46,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Alert lists run to hundreds of KB of JSON; gzip cuts them several-fold
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
+def lean(alert: dict) -> dict:
+    """Alert without its dashcam image: lists and live events stay small; GET /api/alerts/{id} has the image"""
+    return {k: v for k, v in alert.items() if k != "image_base64"}
 
 # Active WebSocket connections for live push notifications
 class ConnectionManager:
@@ -84,7 +93,8 @@ def on_startup():
 async def serve_dashboard():
     index_path = os.path.join(STATIC_DIR, "index.html")
     if os.path.exists(index_path):
-        return FileResponse(index_path)
+        # The page names hashed asset files, so it must be revalidated or a rebuild goes unseen
+        return FileResponse(index_path, headers={"Cache-Control": "no-cache"})
     return HTMLResponse("<h1>RoadIQ API is running. Place index.html in /static</h1>")
 
 @app.get("/api/health")
@@ -144,14 +154,14 @@ async def ingest_alert(alert: AlertCreate):
     runs fleet de-duplication (< 10-12m distance check),
     saves to SQLite, and broadcasts real-time update to dashboard.
     """
-    alert_dict = alert.dict()
+    alert_dict = alert.model_dump()
     result, is_new = insert_or_deduplicate(alert_dict)
 
     # Broadcast event via WebSocket
     await manager.broadcast({
         "type": "NEW_ALERT" if is_new else "UPDATED_CONFIRMATION",
         "is_new": is_new,
-        "alert": result
+        "alert": lean(result)
     })
 
     return {
@@ -162,7 +172,7 @@ async def ingest_alert(alert: AlertCreate):
         "high_confidence": result["high_confidence"],
         "severity_score": result["severity_score"],
         "priority_flag": result["priority_flag"],
-        "alert": result
+        "alert": lean(result)
     }
 
 @app.patch("/api/alerts/{event_id}")
@@ -172,13 +182,13 @@ async def patch_alert(event_id: str, updates: AlertUpdate):
     if not existing:
         raise HTTPException(status_code=404, detail="Alert not found")
 
-    updated = update_alert(event_id, updates.dict(exclude_unset=True))
+    updated = update_alert(event_id, updates.model_dump(exclude_unset=True))
     await manager.broadcast({
         "type": "STATUS_CHANGE",
         "event_id": event_id,
-        "alert": updated
+        "alert": lean(updated)
     })
-    return updated
+    return lean(updated)
 
 @app.delete("/api/alerts/{event_id}")
 async def remove_alert(event_id: str):
@@ -324,14 +334,14 @@ async def simulate_edge_event(
     await manager.broadcast({
         "type": "SIMULATED_TRIGGER",
         "is_new": is_new,
-        "alert": result
+        "alert": lean(result)
     })
 
     return {
         "status": "success",
         "simulated": True,
         "is_new": is_new,
-        "event": result
+        "event": lean(result)
     }
 
 @app.post("/api/seed")

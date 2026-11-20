@@ -1,0 +1,23 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "helvetica neue",
+        "createdAt": "2026-11-20T00:28:05.130Z",
+        "reason": "Claude: Leaflet's own leaflet.css default on .leaflet-container, overridden by .map-canvas.leaflet-container { font: inherit }; the app's faces are Red Hat"
+      },
+      {
+        "rule": "cream-palette",
+        "value": "*",
+        "files": [
+          "static/index.html"
+        ],
+        "createdAt": "2026-11-20T00:28:05.146Z",
+        "reason": "user approved the plan naming the Furrow theme's light manila paper; Hallmark dealt the theme for this field-records console"
+      }
+    ]
+  }
+}
