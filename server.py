@@ -7,6 +7,7 @@ import json
 import csv
 import io
 import random
+from contextlib import asynccontextmanager
 from typing import List, Optional
 from datetime import datetime, timezone
 import uuid
@@ -43,10 +44,24 @@ except Exception:  # ImportError, or XGBoostError when the native OpenMP runtime
     _ML_AVAILABLE = False
     XGB_MODEL_PATH = "models/xgb_risk_model.joblib"
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global risk_predictor
+    init_db()
+    # Predictive Risk Intelligence — initialise if ML module is available
+    if _ML_AVAILABLE:
+        import os as _os
+        model_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), XGB_MODEL_PATH)
+        risk_predictor = RiskPredictor(model_path=model_path)
+    else:
+        risk_predictor = None
+    yield
+
 app = FastAPI(
     title="RoadIQ Municipal Command Center API",
     description="Multi-Sensor Fusion Edge AI Pothole Detection & Municipal Reporting Framework",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Enable CORS for dashboard and external clients
@@ -98,18 +113,6 @@ risk_predictor: Optional[RiskPredictor if _ML_AVAILABLE else object] = None  # t
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-@app.on_event("startup")
-def on_startup():
-    global risk_predictor
-    init_db()
-    # Predictive Risk Intelligence — initialise if ML module is available
-    if _ML_AVAILABLE:
-        import os as _os
-        model_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), XGB_MODEL_PATH)
-        risk_predictor = RiskPredictor(model_path=model_path)
-    else:
-        risk_predictor = None
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard():
@@ -331,6 +334,36 @@ def export_csv(
     return StreamingResponse(
         io.BytesIO(output.getvalue().encode("utf-8")),
         media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+@app.get("/api/export/geojson")
+def export_geojson(
+    severity: Optional[int] = Query(None, ge=1, le=5, description="Filter by severity 1-5"),
+    anomaly_class: Optional[str] = Query(None, description="Pothole, Manhole Cover, Speed Bump, Rough Patch"),
+    ward_id: Optional[str] = Query(None, description="Filter by ward name or circle"),
+    status: Optional[str] = Query(None, description="New, Under Review, Dispatched, In Repair, Resolved"),
+    search: Optional[str] = Query(None, description="Keyword search road name, ward, or notes"),
+    only_flagged: Optional[bool] = Query(None, description="Only critical/flagged priority S=4-5 alerts"),
+    sla_status: Optional[str] = Query(None, description="Filter by SLA status: breached, at_risk, on_track, met"),
+    limit: int = Query(2000, ge=1, le=5000)
+):
+    """Generates official GeoJSON work order export file for municipal GIS mapping systems with filter support"""
+    collection = get_geojson_collection(
+        severity=severity,
+        anomaly_class=anomaly_class,
+        ward_id=ward_id,
+        status=status,
+        search=search,
+        only_flagged=only_flagged,
+        sla_status=sla_status,
+        limit=limit
+    )
+    content = json.dumps(collection, indent=2)
+    filename = f"RoadIQ_Municipal_Alerts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.geojson"
+    return Response(
+        content=content,
+        media_type="application/geo+json",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
 

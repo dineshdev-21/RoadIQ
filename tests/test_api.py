@@ -105,3 +105,106 @@ def test_geojson_endpoint():
 def test_original_ingest():
     r = client.post("/api/alerts", json=VALID_ALERT)
     assert r.status_code == 201
+
+
+# ---------------------------------------------------------------------------
+# 8. Single alert fetch + 404
+# ---------------------------------------------------------------------------
+def test_fetch_alert_detail():
+    # Ingest an alert to ensure at least one exists
+    ingest = client.post("/api/alerts", json=VALID_ALERT)
+    assert ingest.status_code == 201
+    event_id = ingest.json()["event_id"]
+
+    r = client.get(f"/api/alerts/{event_id}")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["event_id"] == event_id
+
+    # 404 for missing alert
+    r_missing = client.get("/api/alerts/nonexistent-event-id")
+    assert r_missing.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 9. Alert status patch + 404
+# ---------------------------------------------------------------------------
+def test_patch_alert():
+    ingest = client.post("/api/alerts", json=VALID_ALERT)
+    assert ingest.status_code == 201
+    event_id = ingest.json()["event_id"]
+
+    patch_r = client.patch(
+        f"/api/alerts/{event_id}",
+        json={"status": "In Repair", "notes": "Dispatched crew PB-PW-03"}
+    )
+    assert patch_r.status_code == 200
+    patched_data = patch_r.json()
+    assert patched_data["status"] == "In Repair"
+
+    patch_missing = client.patch(
+        "/api/alerts/nonexistent-event-id",
+        json={"status": "Resolved"}
+    )
+    assert patch_missing.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 10. Alert delete + 404
+# ---------------------------------------------------------------------------
+def test_delete_alert():
+    ingest = client.post("/api/alerts", json=VALID_ALERT)
+    assert ingest.status_code == 201
+    event_id = ingest.json()["event_id"]
+
+    del_r = client.delete(f"/api/alerts/{event_id}")
+    assert del_r.status_code == 200
+    assert del_r.json()["deleted_id"] == event_id
+
+    # Deleting again should yield 404
+    del_r2 = client.delete(f"/api/alerts/{event_id}")
+    assert del_r2.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# 11. Export CSV endpoint
+# ---------------------------------------------------------------------------
+def test_export_csv():
+    r = client.get("/api/export/csv")
+    assert r.status_code == 200
+    assert "text/csv" in r.headers.get("content-type", "")
+    assert "attachment" in r.headers.get("content-disposition", "")
+    assert "Event ID" in r.text
+
+
+# ---------------------------------------------------------------------------
+# 12. Export GeoJSON endpoint
+# ---------------------------------------------------------------------------
+def test_export_geojson():
+    r = client.get("/api/export/geojson")
+    assert r.status_code == 200
+    assert "application/geo+json" in r.headers.get("content-type", "")
+    assert "attachment" in r.headers.get("content-disposition", "")
+    data = r.json()
+    assert data.get("type") == "FeatureCollection"
+    assert "features" in data
+
+
+# ---------------------------------------------------------------------------
+# 13. Ward analytics endpoint
+# ---------------------------------------------------------------------------
+def test_ward_analytics():
+    r = client.get("/api/analytics/wards")
+    assert r.status_code == 200
+    data = r.json()
+    assert "corridor_summary" in data
+    assert "wards" in data
+
+
+# ---------------------------------------------------------------------------
+# 14. Reseed endpoint
+# ---------------------------------------------------------------------------
+def test_reseed_endpoint():
+    r = client.post("/api/seed")
+    assert r.status_code == 200
+    assert r.json().get("status") == "success"
