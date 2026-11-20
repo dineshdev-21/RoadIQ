@@ -175,6 +175,15 @@ curl -O http://127.0.0.1:8000/api/export/csv
 curl -O "http://127.0.0.1:8000/api/export/csv?ward_id=Ward+4&sla_status=breached"
 ```
 
+### Export Municipal GeoJSON Work Orders
+```bash
+# Export all municipal alerts as downloadable GeoJSON
+curl -O http://127.0.0.1:8000/api/export/geojson
+
+# Export filtered by Anomaly Class or Priority Flag
+curl -O "http://127.0.0.1:8000/api/export/geojson?anomaly_class=Pothole&only_flagged=true"
+```
+
 ### Fetch GIS GeoJSON FeatureCollection
 ```bash
 # Fetch all GeoJSON points for Leaflet.js
