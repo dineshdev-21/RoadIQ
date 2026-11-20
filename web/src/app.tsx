@@ -3,13 +3,14 @@ import type { Alert, LiveMessage } from './lib/types';
 import { fetchAlerts, reseedCorridor, triggerSimulation } from './lib/api';
 import { connectLive, type LiveState } from './lib/live';
 import { playChime } from './lib/chime';
-import { EMPTY_FILTERS, applyLive, byPriority, countAlerts, filtersFromSearch, filtersToSearch, matches, type Filters } from './lib/queue';
+import { EMPTY_FILTERS, applyLive, byPriority, countAlerts, exportQuery, filtersFromSearch, filtersToSearch, matches, type Filters } from './lib/queue';
 import { TopBar } from './components/TopBar';
 import { StatStrip } from './components/StatStrip';
 import { Queue } from './components/Queue';
 import { MapPanel } from './components/MapPanel';
 import { Inspector } from './components/Inspector';
 import { Toasts, type Toast } from './components/Toasts';
+import { WardAnalytics } from './components/WardAnalytics';
 
 const TOAST_MS = 6000;
 
@@ -24,6 +25,7 @@ export function App() {
   const [live, setLive] = useState<LiveState>('connecting');
   const [chime, setChime] = useState(true);
   const [simulating, setSimulating] = useState(false);
+  const [analytics, setAnalytics] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const chimeRef = useRef(chime);
   chimeRef.current = chime;
@@ -101,7 +103,7 @@ export function App() {
   return (
     <div class="shell">
       <a class="skip" href="#incidentList">Skip to the repair queue</a>
-      <TopBar live={live} simulating={simulating} chime={chime} onSimulate={simulate} onReseed={reseed} onChime={() => setChime((c) => !c)} />
+      <TopBar live={live} exportQuery={exportQuery(filters)} overdue={counts.overdue} onAnalytics={() => setAnalytics(true)} simulating={simulating} chime={chime} onSimulate={simulate} onReseed={reseed} onChime={() => setChime((c) => !c)} />
       <StatStrip counts={counts} ready={load === 'ready'} />
       <main class="work">
         <Queue
@@ -133,6 +135,13 @@ export function App() {
           )}
         </MapPanel>
       </main>
+      <WardAnalytics
+        open={analytics}
+        onClose={() => setAnalytics(false)}
+        onWard={(ward) => { setFilters({ ...EMPTY_FILTERS, ward }); setAnalytics(false); }}
+        onAlert={(id) => { setSelectedId(id); setAnalytics(false); }}
+        onOverdue={() => { setFilters({ ...EMPTY_FILTERS, tab: 'overdue' }); setAnalytics(false); }}
+      />
       <Toasts toasts={toasts} onDismiss={(id) => setToasts((l) => l.filter((t) => t.id !== id))} onInspect={setSelectedId} />
     </div>
   );

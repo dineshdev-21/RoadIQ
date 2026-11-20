@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
 import os
 
-from models import AlertCreate, AlertUpdate, AlertResponse, MunicipalStats
+from models import AlertCreate, AlertUpdate, AlertResponse, MunicipalStats, WardAnalyticsResponse
 from database import (
     insert_or_deduplicate,
     get_alerts,
@@ -27,10 +27,21 @@ from database import (
     delete_alert,
     get_stats,
     get_geojson_collection,
+    get_ward_analytics,
     init_db
 )
 from seed_data import seed_database, LOCATIONS, VEHICLE_FLEET, generate_svg_defect_image
 from severity import calculate_severity
+from pydantic import BaseModel, Field as PydanticField
+
+# Predictive Risk Intelligence imports (loaded lazily — model may not exist yet)
+try:
+    from ml.predict import RiskPredictor
+    from ml.model import XGB_MODEL_PATH
+    _ML_AVAILABLE = True
+except Exception:  # ImportError, or XGBoostError when the native OpenMP runtime (libomp) is missing
+    _ML_AVAILABLE = False
+    XGB_MODEL_PATH = "models/xgb_risk_model.joblib"
 
 app = FastAPI(
     title="RoadIQ Municipal Command Center API",
@@ -80,6 +91,9 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Predictive Risk Intelligence - loaded once at startup
+risk_predictor: Optional[RiskPredictor if _ML_AVAILABLE else object] = None  # type: ignore
+
 # Mount static assets
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 os.makedirs(STATIC_DIR, exist_ok=True)
@@ -87,7 +101,15 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.on_event("startup")
 def on_startup():
+    global risk_predictor
     init_db()
+    # Predictive Risk Intelligence — initialise if ML module is available
+    if _ML_AVAILABLE:
+        import os as _os
+        model_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), XGB_MODEL_PATH)
+        risk_predictor = RiskPredictor(model_path=model_path)
+    else:
+        risk_predictor = None
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard():
@@ -96,6 +118,19 @@ async def serve_dashboard():
         # The page names hashed asset files, so it must be revalidated or a rebuild goes unseen
         return FileResponse(index_path, headers={"Cache-Control": "no-cache"})
     return HTMLResponse("<h1>RoadIQ API is running. Place index.html in /static</h1>")
+
+# ---------------------------------------------------------------------------
+# Predictive Risk Intelligence — Request model
+# ---------------------------------------------------------------------------
+class RiskPredictionRequest(BaseModel):
+    vehicle_speed: float = PydanticField(..., ge=0, le=180, description="Vehicle speed in km/h")
+    imu_z_rms: float = PydanticField(..., ge=0, description="Z-axis RMS acceleration in g")
+    gyro_x_peak: float = PydanticField(0.0, description="Gyro X peak in deg/s")
+    peak_frequency: float = PydanticField(..., ge=0, description="FFT peak frequency in Hz")
+    kurtosis: float = PydanticField(3.0, description="Spectral kurtosis")
+    suspension_deflection_d: float = PydanticField(..., ge=0, description="Suspension deflection in mm")
+    suspension_onset_rate_r: float = PydanticField(..., ge=0, description="Suspension onset rate in mm/ms")
+    visual_confidence: float = PydanticField(0.92, ge=0.0, le=1.0, description="Visual model confidence")
 
 @app.get("/api/health")
 def health_check():
@@ -111,6 +146,11 @@ def health_check():
 def fetch_stats():
     return get_stats()
 
+@app.get("/api/analytics/wards", response_model=WardAnalyticsResponse)
+def fetch_ward_analytics():
+    """Returns per-ward Road Health Scores, SLA compliance breakdown, and overdue escalation watchlist"""
+    return get_ward_analytics()
+
 @app.get("/api/alerts")
 def list_alerts(
     severity: Optional[int] = Query(None, ge=1, le=5, description="Filter by severity 1-5"),
@@ -119,6 +159,7 @@ def list_alerts(
     status: Optional[str] = Query(None, description="New, Under Review, Dispatched, In Repair, Resolved"),
     search: Optional[str] = Query(None, description="Keyword search road name, ward, or notes"),
     only_flagged: Optional[bool] = Query(None, description="Only critical/flagged priority S=4-5 alerts"),
+    sla_status: Optional[str] = Query(None, description="Filter by SLA status: breached, at_risk, on_track, met"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0)
 ):
@@ -129,15 +170,34 @@ def list_alerts(
         status=status,
         search=search,
         only_flagged=only_flagged,
+        sla_status=sla_status,
         limit=limit,
         offset=offset
     )
     return {"count": len(alerts), "alerts": alerts}
 
 @app.get("/api/alerts/geojson")
-def fetch_geojson():
-    """Returns GeoJSON FeatureCollection directly consumable by Leaflet.js"""
-    return get_geojson_collection()
+def fetch_geojson(
+    severity: Optional[int] = Query(None, ge=1, le=5, description="Filter by severity 1-5"),
+    anomaly_class: Optional[str] = Query(None, description="Pothole, Manhole Cover, Speed Bump, Rough Patch"),
+    ward_id: Optional[str] = Query(None, description="Filter by ward name or circle"),
+    status: Optional[str] = Query(None, description="New, Under Review, Dispatched, In Repair, Resolved"),
+    search: Optional[str] = Query(None, description="Keyword search road name, ward, or notes"),
+    only_flagged: Optional[bool] = Query(None, description="Only critical/flagged priority S=4-5 alerts"),
+    sla_status: Optional[str] = Query(None, description="Filter by SLA status: breached, at_risk, on_track, met"),
+    limit: int = Query(500, ge=1, le=1000)
+):
+    """Returns GeoJSON FeatureCollection directly consumable by Leaflet.js with optional filter support"""
+    return get_geojson_collection(
+        severity=severity,
+        anomaly_class=anomaly_class,
+        ward_id=ward_id,
+        status=status,
+        search=search,
+        only_flagged=only_flagged,
+        sla_status=sla_status,
+        limit=limit
+    )
 
 @app.get("/api/alerts/{event_id}")
 def fetch_alert(event_id: str):
@@ -202,9 +262,27 @@ async def remove_alert(event_id: str):
     return {"status": "success", "deleted_id": event_id}
 
 @app.get("/api/export/csv")
-def export_csv():
-    """Generates official PWD municipal work order CSV export for maintenance crews"""
-    alerts = get_alerts(limit=1000)
+def export_csv(
+    severity: Optional[int] = Query(None, ge=1, le=5, description="Filter by severity 1-5"),
+    anomaly_class: Optional[str] = Query(None, description="Pothole, Manhole Cover, Speed Bump, Rough Patch"),
+    ward_id: Optional[str] = Query(None, description="Filter by ward name or circle"),
+    status: Optional[str] = Query(None, description="New, Under Review, Dispatched, In Repair, Resolved"),
+    search: Optional[str] = Query(None, description="Keyword search road name, ward, or notes"),
+    only_flagged: Optional[bool] = Query(None, description="Only critical/flagged priority S=4-5 alerts"),
+    sla_status: Optional[str] = Query(None, description="Filter by SLA status: breached, at_risk, on_track, met"),
+    limit: int = Query(2000, ge=1, le=5000)
+):
+    """Generates official PWD municipal work order CSV export for maintenance crews with optional filter support"""
+    alerts = get_alerts(
+        severity=severity,
+        anomaly_class=anomaly_class,
+        ward_id=ward_id,
+        status=status,
+        search=search,
+        only_flagged=only_flagged,
+        sla_status=sla_status,
+        limit=limit
+    )
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -213,7 +291,8 @@ def export_csv():
     writer.writerow([
         "Event ID", "Timestamp (UTC)", "Latitude", "Longitude", "Road Name", "Ward / Circle",
         "Anomaly Class", "Severity Score", "Severity Label", "Priority Flag", "Estimated Depth (cm)",
-        "Vehicle Speed (km/h)", "Municipal Action", "Status", "Assigned Crew", "Confirmation Count",
+        "Vehicle Speed (km/h)", "Municipal Action", "SLA Window (h)", "SLA Deadline (UTC)", "SLA Status",
+        "Status", "Assigned Crew", "Confirmation Count",
         "Reporting Vehicle", "IMU Z-RMS (g)", "Peak Freq (Hz)", "Deflection D (mm)", "Onset Rate R (mm/ms)", "Notes"
     ])
 
@@ -233,6 +312,9 @@ def export_csv():
             a["estimated_depth_cm"],
             a["vehicle_speed"],
             a["municipal_action"],
+            a.get("sla_hours", ""),
+            a.get("sla_deadline", ""),
+            (a.get("sla_status") or "").upper(),
             a["status"],
             a.get("assigned_crew") or "Unassigned",
             a["confirmation_count"],
@@ -348,6 +430,30 @@ async def simulate_edge_event(
 def reseed_data():
     seed_database()
     return {"status": "success", "message": "Database reseeded with fresh 12 km Punjab road corridor data."}
+
+# ---------------------------------------------------------------------------
+# Predictive Risk Intelligence — ML endpoint
+# ---------------------------------------------------------------------------
+@app.post("/api/predict-risk")
+def predict_risk(request: RiskPredictionRequest):
+    """
+    Predictive Road Risk Intelligence endpoint.
+    Returns ML-predicted risk category (Low/Medium/High) with confidence
+    for a given set of sensor readings.
+    This is SEPARATE from the existing deterministic severity formula.
+    """
+    is_available = getattr(risk_predictor, "available", getattr(risk_predictor, "model_available", False)) if risk_predictor else False
+    if not is_available:
+        raise HTTPException(
+            status_code=503,
+            detail="Predictive risk model not available. Run ml/train.py first to train the model."
+        )
+    sensor_dict = request.model_dump()
+    try:
+        result = risk_predictor.predict(sensor_dict)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return result
 
 @app.websocket("/ws/live")
 async def websocket_endpoint(websocket: WebSocket):

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { LocateFixed, MapPin, X } from 'lucide-preact';
 import type { Alert } from '../lib/types';
 import { fetchAlert, saveWorkOrder, type WorkOrder } from '../lib/api';
-import { SEVERITY_WINDOW, STATUSES, STATUS_LABELS, fullTime, num, timeOfDay, wardLabel } from '../lib/format';
+import { SEVERITY_WINDOW, SLA_LABELS, STATUSES, STATUS_LABELS, fullTime, num, slaRemaining, timeOfDay, wardLabel } from '../lib/format';
+import { RiskCard } from './RiskCard';
 
 interface Props {
   alert: Alert;
@@ -130,6 +131,24 @@ export function Inspector({ alert, onClose, onSaved, onShowOnMap }: Props) {
             </p>
           </div>
         </section>
+
+        {alert.sla_deadline && (
+          <section class="sla-block" id="modalSlaBlock" aria-labelledby="sla-head">
+            <div class="section-row">
+              <h3 id="sla-head">Repair window, {alert.sla_hours}&nbsp;h</h3>
+              <span class={`sla sla--${alert.sla_status}`} id="modalSlaStatusBadge">{SLA_LABELS[alert.sla_status]}</span>
+            </div>
+            <div class="sla-track" role="img" aria-label={`${Math.min(100, alert.sla_elapsed_pct).toFixed(0)}% of the window used`}>
+              <span class={`sla-fill sla-fill--${alert.sla_status}`} style={{ transform: `scaleX(${Math.min(100, alert.sla_elapsed_pct) / 100})` }} />
+            </div>
+            <p class="muted" id="modalSlaCountdown">
+              {alert.sla_status === 'met' ? 'Resolved inside the window. ' : `${slaRemaining(alert.sla_remaining_minutes)}. `}
+              Deadline <time class="num" dateTime={alert.sla_deadline}>{fullTime(alert.sla_deadline)}</time>.
+            </p>
+          </section>
+        )}
+
+        <RiskCard alert={alert} />
 
         <dl class="sensors notebook" aria-label="Sensor readings at the trigger">
           <div><dt>Vision confidence</dt><dd class="num" id="modalMetricVisual">{snap.visual_confidence != null ? `${(snap.visual_confidence * 100).toFixed(1)}%` : '–'}</dd></div>

@@ -8,7 +8,7 @@ export const STATUS_LABELS: Record<string, string> = {
   Resolved: 'Resolved, closed',
 };
 
-export const CLASSES = ['Pothole', 'Manhole Cover', 'Speed Bump', 'Rough Patch'] as const;
+export const CLASSES = ['Pothole', 'Manhole Cover', 'Speed Bump', 'Rough Patch', 'Normal Road'] as const;
 
 export const WARDS: [string, string][] = [
   ['Ward 1', 'Ward 1, LPU University Zone'],
@@ -39,3 +39,17 @@ export const fullTime = (iso: string) =>
 export const wardLabel = (ward: string) => ward.replace(' - ', ', ');
 
 export const num = (v: number | undefined, digits = 1) => (v == null ? '–' : v.toFixed(digits));
+
+/** "3 h 20 min left", or "Overdue by 2 days" once the window has passed. */
+export function slaRemaining(minutes: number): string {
+  const m = Math.abs(minutes);
+  const text = m >= 2880 ? `${Math.round(m / 1440)} days` : m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`;
+  return minutes < 0 ? `Overdue by ${text}` : `${text} left`;
+}
+
+export const SLA_LABELS: Record<string, string> = {
+  breached: 'Overdue',
+  at_risk: 'Due soon',
+  on_track: 'On track',
+  met: 'Met',
+};

@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'preact/hooks';
 import { Search, Users } from 'lucide-preact';
 import type { Alert } from '../lib/types';
 import type { Counts, Filters, Tab } from '../lib/queue';
-import { CLASSES, SEVERITY_WINDOW, WARDS, timeOfDay } from '../lib/format';
+import { CLASSES, SEVERITY_WINDOW, SLA_LABELS, WARDS, timeOfDay } from '../lib/format';
 
 interface Props {
   rows: Alert[];
@@ -18,9 +18,10 @@ interface Props {
   onSelect: (id: string) => void;
 }
 
-const TABS: { id: Tab; label: string; count: keyof Counts }[] = [
+const TABS: { id: Tab; label: string; title?: string; count: keyof Counts }[] = [
   { id: 'all', label: 'All', count: 'total' },
-  { id: 'critical', label: 'Severity 4 and 5', count: 'critical' },
+  { id: 'critical', label: 'Priority', title: 'Open reports at severity 4 and 5', count: 'critical' },
+  { id: 'overdue', label: 'Overdue', title: 'Open reports past their PWD repair window', count: 'overdue' },
   { id: 'dispatched', label: 'Dispatched', count: 'dispatched' },
   { id: 'resolved', label: 'Resolved', count: 'resolved' },
 ];
@@ -51,6 +52,7 @@ export function Queue(p: Props) {
               role="tab"
               class="tab feed-tab"
               data-tab={t.id}
+              title={t.title}
               aria-selected={p.filters.tab === t.id}
               onClick={() => p.onFilters({ tab: t.id })}
             >
@@ -163,7 +165,12 @@ export function Queue(p: Props) {
                     )}
                   </span>
                   <span class="row-foot">
-                    <span class={statusClass(a.status)}>{a.status}</span>
+                    <span class="row-chips">
+                      <span class={statusClass(a.status)}>{a.status}</span>
+                      {(a.sla_status === 'breached' || a.sla_status === 'at_risk') && a.status !== 'Resolved' && (
+                        <span class={`sla sla--${a.sla_status}`}>{SLA_LABELS[a.sla_status]}</span>
+                      )}
+                    </span>
                     <time class="num" dateTime={a.timestamp}>{timeOfDay(a.timestamp)}</time>
                   </span>
                 </button>

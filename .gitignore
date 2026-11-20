@@ -1,5 +1,6 @@
 __pycache__/
 *.py[cod]
+*.pyc
 *$py.class
 .Python
 .venv/
@@ -12,3 +13,13 @@ ENV/
 .vscode/
 web/node_modules/
 .pytest_cache/
+
+# Models and data artifacts
+models/*.joblib
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+reports/*.png
+reports/*.json
+!reports/.gitkeep

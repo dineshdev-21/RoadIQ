@@ -3,7 +3,7 @@ RoadIQ Data Models
 Multi-Sensor Fusion Edge AI & Municipal Reporting Framework
 """
 
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime, timezone
 import uuid
 from pydantic import BaseModel, Field
@@ -64,6 +64,11 @@ class AlertResponse(BaseModel):
     confirmation_count: int
     high_confidence: bool
     reporting_vehicles: List[str]
+    sla_hours: Optional[int] = None
+    sla_deadline: Optional[str] = None
+    sla_remaining_minutes: Optional[int] = None
+    sla_elapsed_pct: Optional[float] = None
+    sla_status: Optional[str] = None
     created_at: str
     updated_at: str
 
@@ -83,3 +88,64 @@ class MunicipalStats(BaseModel):
     overall_accuracy_pct: float
     false_positive_rate_pct: float
     scanned_corridor_km: float
+
+
+class CorridorAnalyticsSummary(BaseModel):
+    overall_health_score: float
+    overall_health_grade: str
+    total_alerts: int
+    open_alerts: int
+    resolved_alerts: int
+    sla_breached_count: int
+    sla_at_risk_count: int
+    sla_on_track_count: int
+    sla_compliance_pct: float
+    avg_estimated_depth_cm: float
+
+
+class WardMetrics(BaseModel):
+    ward_id: str
+    ward_short: str
+    health_score: float
+    health_grade: str
+    total_alerts: int
+    open_alerts: int
+    resolved_alerts: int
+    critical_open: int
+    sla_breached: int
+    sla_at_risk: int
+    sla_on_track: int
+    sla_compliance_pct: float
+    avg_severity: float
+    avg_depth_cm: float
+    confirmed_hotspots: int
+    severity_distribution: Dict[str, int]
+    class_distribution: Dict[str, int]
+
+
+class SlaUrgentAlert(BaseModel):
+    event_id: str
+    road_name: str
+    ward_id: str
+    anomaly_class: str
+    severity_score: int
+    severity_label: str
+    status: str
+    assigned_crew: Optional[str] = None
+    sla_hours: int
+    sla_deadline: str
+    sla_remaining_minutes: int
+    sla_elapsed_pct: float
+    sla_status: str
+    confirmation_count: int
+    latitude: float
+    longitude: float
+
+
+class WardAnalyticsResponse(BaseModel):
+    generated_at: str
+    corridor_summary: CorridorAnalyticsSummary
+    wards: List[WardMetrics]
+    sla_alerts: List[SlaUrgentAlert]
+    severity_breakdown: Dict[str, int]
+    status_breakdown: Dict[str, int]

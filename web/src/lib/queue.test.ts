@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Alert } from './types';
-import { EMPTY_FILTERS, applyLive, byPriority, countAlerts, filtersFromSearch, filtersToSearch, matches } from './queue';
+import { EMPTY_FILTERS, applyLive, byPriority, countAlerts, exportQuery, filtersFromSearch, filtersToSearch, matches } from './queue';
 
 const base: Alert = {
   event_id: 'RIQ-1', timestamp: '2026-11-19T10:00:00+00:00', latitude: 31.25, longitude: 75.71,
@@ -10,6 +10,7 @@ const base: Alert = {
   status: 'New', assigned_crew: null, notes: null, confirmation_count: 1, high_confidence: false,
   reporting_vehicles: ['PB-08-BUS-402'], created_at: '2026-11-19T10:00:00+00:00',
   updated_at: '2026-11-19T10:00:00+00:00', has_image: true,
+  sla_hours: 24, sla_deadline: '2026-11-20T10:00:00+00:00', sla_remaining_minutes: 600, sla_elapsed_pct: 58, sla_status: 'on_track',
 };
 const make = (o: Partial<Alert>): Alert => ({ ...base, ...o });
 
@@ -66,7 +67,7 @@ describe('ordering and counts', () => {
       make({ status: 'Resolved' }),
       make({ status: 'Dispatched', anomaly_class: 'Manhole Cover', severity_score: 2, confirmation_count: 3 }),
     ]);
-    expect(c).toEqual({ total: 3, critical: 1, dispatched: 1, resolved: 1, confirmed: 1, potholes: 2, manholes: 1 });
+    expect(c).toEqual({ total: 3, critical: 1, overdue: 0, dispatched: 1, resolved: 1, confirmed: 1, potholes: 2, manholes: 1 });
   });
 });
 
@@ -84,5 +85,24 @@ describe('applyLive', () => {
     expect(applyLive(list, { type: 'DELETE_ALERT', event_id: 'a' }).map((a) => a.event_id)).toEqual(['b']);
     expect(applyLive(list, { type: 'DELETE_ALERT', event_id: 'zz' })).toBe(list);
     expect(applyLive(list, { type: 'STATUS_CHANGE', event_id: 'zz', alert: make({ event_id: 'zz' }) })).toBe(list);
+  });
+});
+
+describe('sla overdue', () => {
+  it('shows only open reports past their window', () => {
+    const f = { ...EMPTY_FILTERS, tab: 'overdue' as const };
+    expect(matches(make({ sla_status: 'breached' }), f)).toBe(true);
+    expect(matches(make({ sla_status: 'breached', status: 'Resolved' }), f)).toBe(false);
+    expect(matches(make({ sla_status: 'at_risk' }), f)).toBe(false);
+    expect(countAlerts([make({ sla_status: 'breached' }), make({})]).overdue).toBe(1);
+  });
+});
+
+describe('exportQuery', () => {
+  it('maps the view onto the CSV endpoint parameters', () => {
+    expect(exportQuery(EMPTY_FILTERS)).toBe('');
+    const q = new URLSearchParams(exportQuery({ tab: 'overdue', severity: '5', cls: 'Pothole', ward: 'Ward 4', q: ' gt road ' }));
+    expect(Object.fromEntries(q)).toEqual({ severity: '5', anomaly_class: 'Pothole', ward_id: 'Ward 4', search: 'gt road', sla_status: 'breached' });
+    expect(exportQuery({ ...EMPTY_FILTERS, tab: 'critical' })).toBe('?only_flagged=true');
   });
 });

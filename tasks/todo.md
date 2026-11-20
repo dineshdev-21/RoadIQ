@@ -45,3 +45,18 @@ Measured before: `GET /api/alerts?limit=200` = 292 KB, of which 228 KB is dashca
 - **Adversarial review** (3 lenses plus 1 skeptic): 6 confirmed, all fixed. Stale form overwrote another operator's status (now syncs untouched fields and PATCHes only changed ones; verified in the browser); a save in flight reported under the next report (inspector keyed per report); "Zoom to it" landed under the card; no resync after a socket reconnect; a pin click didn't scroll the queue; a de-duplicated simulated hit gave no feedback. 1 refuted.
 - **Tests:** pytest 10/10 (API contract), vitest 10/10 (queue logic).
 - **Not done:** no end-to-end browser test suite; the live flow (simulate, toast, save) was checked by hand in the browser.
+
+## Merge with collaborators' main (8 PRs, #1 to #7)
+
+- **Kept from main:** ML road-risk module (`ml/`, `POST /api/predict-risk`), ward analytics and SLA tracking (`GET /api/analytics/wards`, SLA fields on every alert), export filters, the single-query stats from #5 (kept instead of mine, which was the same change), and every test.
+- **Conflicts:** `.gitignore` (kept both), `database.py` (`LIST_COLUMNS` plus their `row_to_dict(now=...)`; their stats query), `tests/test_api.py` (theirs kept; mine moved to `tests/test_payloads.py`), old `static/` files (replaced by the Preact build).
+- **Ported to Preact:**
+  - an Overdue tab and SLA chips on queue rows
+  - a repair-window block in the report card
+  - a predicted-risk section, with a not-trained state
+  - a ward analytics drawer: health, compliance, severity mix, pipeline, ward table (click to filter), SLA watchlist
+  - filtered CSV export
+  - a Normal Road class and an SVG favicon
+- **Fixed in their code:** the ML import guard caught only `ImportError`; a missing OpenMP runtime raises `XGBoostError`, which crashed the server. It now falls back to "prediction unavailable".
+- **Checks:** pytest 50 passed; `tests/test_prediction.py` was not run because it needs `brew install libomp` on macOS. vitest 12 passed. Sweep 0 FAIL.
+- **Not verified:** the predicted-risk section with a trained model (no model and no libomp on this machine).

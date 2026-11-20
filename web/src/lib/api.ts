@@ -1,4 +1,4 @@
-import type { Alert, AlertDetail } from './types';
+import type { Alert, AlertDetail, RiskPrediction, SensorSnapshot, WardAnalytics } from './types';
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -33,3 +33,18 @@ export const triggerSimulation = () => request<unknown>('/api/simulator/trigger'
 export const reseedCorridor = () => request<unknown>('/api/seed', { method: 'POST' });
 
 export const CSV_EXPORT_URL = '/api/export/csv';
+
+export const fetchWardAnalytics = () => request<WardAnalytics>('/api/analytics/wards');
+
+/** POST /api/predict-risk answers 503 until ml/train.py has produced a model. */
+export async function predictRisk(speed: number, s: SensorSnapshot, signal?: AbortSignal): Promise<RiskPrediction | 'unavailable'> {
+  const res = await fetch('/api/predict-risk', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ vehicle_speed: speed, ...s }),
+    signal,
+  });
+  if (res.status === 503) return 'unavailable';
+  if (!res.ok) throw new Error(`The server answered ${res.status}`);
+  return res.json() as Promise<RiskPrediction>;
+}

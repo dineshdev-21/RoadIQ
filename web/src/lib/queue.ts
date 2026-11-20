@@ -1,6 +1,6 @@
 import type { Alert, LiveMessage } from './types';
 
-export type Tab = 'all' | 'critical' | 'dispatched' | 'resolved';
+export type Tab = 'all' | 'critical' | 'overdue' | 'dispatched' | 'resolved';
 
 export interface Filters {
   tab: Tab;
@@ -12,7 +12,7 @@ export interface Filters {
 
 export const EMPTY_FILTERS: Filters = { tab: 'all', severity: '', cls: '', ward: '', q: '' };
 
-const TABS: Tab[] = ['all', 'critical', 'dispatched', 'resolved'];
+const TABS: Tab[] = ['all', 'critical', 'overdue', 'dispatched', 'resolved'];
 const URL_KEYS = { severity: 'sev', cls: 'class', ward: 'ward', q: 'q' } as const;
 
 export function filtersFromSearch(search: string): Filters {
@@ -38,9 +38,11 @@ export function filtersToSearch(f: Filters): string {
 }
 
 export const isOpenPriority = (a: Alert) => a.severity_score >= 4 && a.status !== 'Resolved';
+export const isOverdue = (a: Alert) => a.status !== 'Resolved' && a.sla_status === 'breached';
 
 export function matches(a: Alert, f: Filters): boolean {
   if (f.tab === 'critical' && !isOpenPriority(a)) return false;
+  if (f.tab === 'overdue' && !isOverdue(a)) return false;
   if (f.tab === 'dispatched' && a.status !== 'Dispatched') return false;
   if (f.tab === 'resolved' && a.status !== 'Resolved') return false;
   if (f.severity && a.severity_score !== Number(f.severity)) return false;
@@ -66,6 +68,7 @@ export function byPriority(a: Alert, b: Alert): number {
 export interface Counts {
   total: number;
   critical: number;
+  overdue: number;
   dispatched: number;
   resolved: number;
   confirmed: number;
@@ -74,9 +77,10 @@ export interface Counts {
 }
 
 export function countAlerts(alerts: Alert[]): Counts {
-  const c: Counts = { total: alerts.length, critical: 0, dispatched: 0, resolved: 0, confirmed: 0, potholes: 0, manholes: 0 };
+  const c: Counts = { total: alerts.length, critical: 0, overdue: 0, dispatched: 0, resolved: 0, confirmed: 0, potholes: 0, manholes: 0 };
   for (const a of alerts) {
     if (isOpenPriority(a)) c.critical++;
+    if (isOverdue(a)) c.overdue++;
     if (a.status === 'Dispatched') c.dispatched++;
     if (a.status === 'Resolved') c.resolved++;
     if (a.confirmation_count >= 3) c.confirmed++;
@@ -95,4 +99,19 @@ export function applyLive(alerts: Alert[], msg: LiveMessage): Alert[] {
   const i = alerts.findIndex((a) => a.event_id === next.event_id);
   if (i === -1) return msg.type === 'STATUS_CHANGE' ? alerts : [next, ...alerts];
   return alerts.map((a, j) => (j === i ? next : a));
+}
+
+/** The CSV export's query for the current view, in the server's parameter names. */
+export function exportQuery(f: Filters): string {
+  const p = new URLSearchParams();
+  if (f.severity) p.set('severity', f.severity);
+  if (f.cls) p.set('anomaly_class', f.cls);
+  if (f.ward) p.set('ward_id', f.ward);
+  if (f.q.trim()) p.set('search', f.q.trim());
+  if (f.tab === 'critical') p.set('only_flagged', 'true');
+  if (f.tab === 'overdue') p.set('sla_status', 'breached');
+  if (f.tab === 'dispatched') p.set('status', 'Dispatched');
+  if (f.tab === 'resolved') p.set('status', 'Resolved');
+  const s = p.toString();
+  return s ? `?${s}` : '';
 }

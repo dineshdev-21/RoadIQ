@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { Bell, BellOff, Download, RotateCcw, Zap } from 'lucide-preact';
+import { BarChart3, Bell, BellOff, Download, RotateCcw, Zap } from 'lucide-preact';
 import type { LiveState } from '../lib/live';
 import { CSV_EXPORT_URL } from '../lib/api';
 
@@ -21,6 +21,9 @@ function Clock() {
 
 interface Props {
   live: LiveState;
+  exportQuery: string;
+  overdue: number;
+  onAnalytics: () => void;
   simulating: boolean;
   chime: boolean;
   onSimulate: () => void;
@@ -28,7 +31,7 @@ interface Props {
   onChime: () => void;
 }
 
-export function TopBar({ live, simulating, chime, onSimulate, onReseed, onChime }: Props) {
+export function TopBar({ live, exportQuery, overdue, onAnalytics, simulating, chime, onSimulate, onReseed, onChime }: Props) {
   return (
     <header class="bar">
       <a class="wordmark" href="/" aria-label="RoadIQ, reload the command center">RoadIQ</a>
@@ -40,7 +43,12 @@ export function TopBar({ live, simulating, chime, onSimulate, onReseed, onChime 
           <Zap size={16} aria-hidden="true" />
           <span class="label">Simulate edge hit</span>
         </button>
-        <a id="btnExportCsv" class="btn btn--quiet" href={CSV_EXPORT_URL} download>
+        <button type="button" id="btnWardAnalytics" class="btn btn--quiet" onClick={onAnalytics}>
+          <BarChart3 size={16} aria-hidden="true" />
+          <span class="label">Ward analytics</span>
+          {overdue > 0 && <span class="count-badge num" aria-label={`${overdue} reports overdue`}>{overdue}</span>}
+        </button>
+        <a id="btnExportCsv" class="btn btn--quiet" href={`${CSV_EXPORT_URL}${exportQuery}`} download title={exportQuery ? 'Export the reports in this view' : 'Export every report'}>
           <Download size={16} aria-hidden="true" />
           <span class="label">Export CSV</span>
         </a>
